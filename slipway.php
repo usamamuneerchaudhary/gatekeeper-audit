@@ -1,0 +1,75 @@
+<?php
+
+declare(strict_types=1);
+
+/*
+|--------------------------------------------------------------------------
+| Slipway: CI pipeline for the gatekeeper-audit package
+|--------------------------------------------------------------------------
+|
+| .github/workflows/slipway.yml is GENERATED from this file. Never edit it by hand.
+| After changing this file run:
+|
+|   composer slipway:compile
+|
+| and commit both files. The slipway-guard job fails if they disagree.
+|
+*/
+
+return [
+    'name' => 'CI',
+
+    'drivers' => [
+        'github' => [
+            'enabled' => true,
+            'options' => [
+                'pins' => [
+                    'actions/cache' => '0057852bfaa89a56745cba8c7296529d2fc39830', // v4
+                    'actions/checkout' => '11d5960a326750d5838078e36cf38b85af677262', // v4
+                    'shivammathur/setup-php' => 'eb7c497e18156a6bbabfef1d3a82760b9eda3962', // v2
+                ],
+            ],
+        ],
+    ],
+
+    'strict' => false,
+    'guard' => true,
+
+    // Libraries do not commit composer.lock, so key the cache on composer.json.
+    'lockfile' => false,
+
+    // Run Slipway's commands through Testbench. Packages have no artisan file.
+    'artisan' => 'vendor/bin/testbench',
+
+    // Minimum runtime is PHP 8.3. CI covers 8.3 through 8.5.
+    'php' => ['8.3', '8.4', '8.5'],
+    'node' => null,
+
+    'triggers' => [
+        'push' => ['main'],
+        'tags' => [],
+        'pull_request' => true,
+        'schedule' => ['0 3 * * 1'],
+        'manual' => true,
+        'paths_ignore' => [],
+    ],
+
+    'concurrency' => ['cancel_superseded' => true],
+    'timeouts' => ['default' => 15],
+    'cache' => true,
+    'env' => [],
+
+    'stages' => [
+        'quality' => ['pint', 'composer-audit', 'secret-scan'],
+
+        'test' => [
+            'matrix' => true,
+            // The suite runs on Testbench, so skip Laravel app environment preparation.
+            'steps' => ['pest' => ['prepare_env' => false]],
+        ],
+    ],
+
+    'environments' => [],
+    'policies' => [],
+    'secrets' => [],
+];
