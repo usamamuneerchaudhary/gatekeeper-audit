@@ -2,7 +2,7 @@
 
 All notable changes to Gatekeeper Audit are documented here.
 
-## Unreleased
+## 1.0.2 - 2026-11-15
 
 - Added a coverage section to the console summary, verbose output, JSON report, and markdown report. It lists the files the audit opened, groups skipped routes by reason, and counts routes by the file that registered them, including custom route file names. Application console commands are listed and not audited.
 
