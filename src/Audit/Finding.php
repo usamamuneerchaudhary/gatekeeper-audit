@@ -23,6 +23,7 @@ final readonly class Finding
         public array $lines,
         public string $message,
         public array $evidence = [],
+        public ?Suggestion $suggestion = null,
     ) {}
 
     /**
@@ -62,6 +63,7 @@ final readonly class Finding
             'lines' => $this->lines,
             'message' => $this->message,
             'evidence' => $this->evidence,
+            'suggestion' => $this->suggestion?->toArray(),
         ];
     }
 }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Usamamuneerchaudhary\GatekeeperAudit\Report;
 
 use Usamamuneerchaudhary\GatekeeperAudit\Audit\AuditResult;
+use Usamamuneerchaudhary\GatekeeperAudit\Audit\Finding;
 use Usamamuneerchaudhary\GatekeeperAudit\Enums\Severity;
 
 final class SarifReporter
@@ -35,7 +36,7 @@ final class SarifReporter
             $results[] = [
                 'ruleId' => $finding->rule,
                 'level' => $this->level($finding->severity),
-                'message' => ['text' => implode('|', $finding->methods).' '.$finding->uri.': '.$finding->message],
+                'message' => ['text' => $this->message($finding)],
                 'locations' => [$location],
                 'partialFingerprints' => ['gatekeeperId' => $finding->id()],
             ];
@@ -57,6 +58,20 @@ final class SarifReporter
         $json = json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
 
         return ($json === false ? '{}' : $json).PHP_EOL;
+    }
+
+    /**
+     * Result text, including the one-line suggestion when one exists.
+     */
+    private function message(Finding $finding): string
+    {
+        $text = implode('|', $finding->methods).' '.$finding->uri.': '.$finding->message;
+
+        if ($finding->suggestion !== null) {
+            $text .= ' Suggestion: '.$finding->suggestion->summary;
+        }
+
+        return $text;
     }
 
     /**

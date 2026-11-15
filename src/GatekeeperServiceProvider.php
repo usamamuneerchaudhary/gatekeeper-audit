@@ -11,6 +11,7 @@ use Usamamuneerchaudhary\GatekeeperAudit\Audit\Auditor;
 use Usamamuneerchaudhary\GatekeeperAudit\Audit\ModelInspector;
 use Usamamuneerchaudhary\GatekeeperAudit\Audit\PhpFileIndex;
 use Usamamuneerchaudhary\GatekeeperAudit\Audit\RouteScanner;
+use Usamamuneerchaudhary\GatekeeperAudit\Audit\Suggester;
 use Usamamuneerchaudhary\GatekeeperAudit\Console\AuditCommand;
 use Usamamuneerchaudhary\GatekeeperAudit\Console\BaselineCommand;
 
@@ -42,11 +43,14 @@ final class GatekeeperServiceProvider extends ServiceProvider
         });
 
         $this->app->singleton(Auditor::class, function (): Auditor {
+            $config = $this->gatekeeperConfig();
+
             return new Auditor(
                 $this->app->make(RouteScanner::class),
                 $this->app->make(ActionInspector::class),
                 $this->app->make(ModelInspector::class),
-                $this->gatekeeperConfig(),
+                $config,
+                new Suggester($config),
             );
         });
     }

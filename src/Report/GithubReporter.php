@@ -29,7 +29,13 @@ final class GithubReporter
             }
 
             $properties[] = 'title='.$this->escape('Gatekeeper '.$finding->rule);
-            $message = $this->escape(implode('|', $finding->methods).' '.$finding->uri.': '.$finding->message.' ['.$finding->id().']');
+            $messageText = implode('|', $finding->methods).' '.$finding->uri.': '.$finding->message;
+
+            if ($finding->suggestion !== null) {
+                $messageText .= ' Suggestion: '.$finding->suggestion->summary;
+            }
+
+            $message = $this->escape($messageText.' ['.$finding->id().']');
             $lines[] = '::'.$level.' '.implode(',', $properties).'::'.$message;
         }
 

@@ -9,7 +9,7 @@ use Usamamuneerchaudhary\GatekeeperAudit\Enums\Severity;
 final readonly class Auditor
 {
     /**
-     * Wire the scanner, inspector, and model facts used by the rules.
+     * Wire the scanner, inspector, model facts, and suggestion builder.
      *
      * @param  array<string, mixed>  $config
      */
@@ -18,6 +18,7 @@ final readonly class Auditor
         private ActionInspector $inspector,
         private ModelInspector $models,
         private array $config,
+        private Suggester $suggester,
     ) {}
 
     /**
@@ -79,29 +80,29 @@ final readonly class Auditor
         $analysis = $this->inspector->inspect($subject);
 
         if ($analysis->unparsed) {
-            return [$this->finding('unparsed_action', Severity::Low, $subject, 'The action source could not be parsed, so no authorization signal could be confirmed.', [], $subject->line !== null ? [$subject->line] : [])];
+            return [$this->report('unparsed_action', Severity::Low, $subject, $analysis, 'The action source could not be parsed, so no authorization signal could be confirmed.', [], $subject->line !== null ? [$subject->line] : [])];
         }
 
         $findings = [];
 
         if ($analysis->policyTrivial) {
-            $findings[] = $this->finding('trivial_policy', Severity::High, $subject, 'A policy check runs, but the policy always returns true.', [$analysis->policyEvidence ?? 'policy returns true'], $subject->line !== null ? [$subject->line] : []);
+            $findings[] = $this->report('trivial_policy', Severity::High, $subject, $analysis, 'A policy check runs, but the policy always returns true.', [$analysis->policyEvidence ?? 'policy returns true'], $subject->line !== null ? [$subject->line] : []);
         }
 
         if ($subject->isObjectRoute()) {
             if (! $analysis->hasObjectCheck && $analysis->formRequestTrivial && $analysis->formRequestClass !== null) {
-                $findings[] = $this->finding('trivial_form_request', Severity::High, $subject, 'The FormRequest authorize() method does not check the routed object.', [$analysis->formRequestClass.'::authorize() is trivial or missing'], $subject->line !== null ? [$subject->line] : []);
+                $findings[] = $this->report('trivial_form_request', Severity::High, $subject, $analysis, 'The FormRequest authorize() method does not check the routed object.', [$analysis->formRequestClass.'::authorize() is trivial or missing'], $subject->line !== null ? [$subject->line] : []);
             } elseif (! $analysis->hasObjectCheck) {
                 $evidence = $analysis->roleEvidence;
                 $evidence[] = 'no object-level authorize, Gate, can middleware, or FormRequest check was found';
 
-                $findings[] = $this->finding('object_authorization', Severity::High, $subject, 'Authenticated route accepts an object but shows no object-level authorization check.', $evidence, $subject->line !== null ? [$subject->line] : []);
+                $findings[] = $this->report('object_authorization', Severity::High, $subject, $analysis, 'Authenticated route accepts an object but shows no object-level authorization check.', $evidence, $subject->line !== null ? [$subject->line] : []);
             }
         } elseif ($subject->isWrite()) {
             if ($analysis->formRequestTrivial && ! $analysis->hasAnyAuthorization && $analysis->formRequestClass !== null) {
-                $findings[] = $this->finding('trivial_form_request', Severity::Medium, $subject, 'The FormRequest authorize() method does not check anything.', [$analysis->formRequestClass.'::authorize() is trivial or missing'], $subject->line !== null ? [$subject->line] : []);
+                $findings[] = $this->report('trivial_form_request', Severity::Medium, $subject, $analysis, 'The FormRequest authorize() method does not check anything.', [$analysis->formRequestClass.'::authorize() is trivial or missing'], $subject->line !== null ? [$subject->line] : []);
             } elseif (! $analysis->hasAnyAuthorization) {
-                $findings[] = $this->finding('missing_authorization', Severity::Medium, $subject, 'State-changing route shows no authorization check of any kind.', ['no authorize, Gate, can middleware, or FormRequest check was found'], $subject->line !== null ? [$subject->line] : []);
+                $findings[] = $this->report('missing_authorization', Severity::Medium, $subject, $analysis, 'State-changing route shows no authorization check of any kind.', ['no authorize, Gate, can middleware, or FormRequest check was found'], $subject->line !== null ? [$subject->line] : []);
             }
         }
 
@@ -133,7 +134,7 @@ final readonly class Auditor
             }
 
             if ($globalScope && ! $flagGlobalScopes) {
-                $probe = $this->finding($group['rule'], Severity::Low, $subject, 'Suppressed lookup on a globally scoped model.', [], $group['lines']);
+                $probe = $this->report($group['rule'], Severity::Low, $subject, $analysis, 'Suppressed lookup on a globally scoped model.', [], $group['lines']);
 
                 $suppressed[] = ['finding' => $probe, 'reason' => 'global scope on '.$label];
 
@@ -155,7 +156,7 @@ final readonly class Auditor
                 $evidence[] = 'scoped bindings cover the injected parameter only, not this query';
             }
 
-            $findings[] = $this->finding($group['rule'], $severity, $subject, $message, $evidence, $group['lines']);
+            $findings[] = $this->report($group['rule'], $severity, $subject, $analysis, $message, $evidence, $group['lines']);
         }
 
         return $findings;
@@ -183,12 +184,12 @@ final readonly class Auditor
     }
 
     /**
-     * Build a finding for a subject.
+     * Build a finding and the suggestion that belongs with it.
      *
      * @param  list<string>  $evidence
      * @param  list<int>  $lines
      */
-    private function finding(string $rule, Severity $severity, RouteSubject $subject, string $message, array $evidence, array $lines): Finding
+    private function report(string $rule, Severity $severity, RouteSubject $subject, ActionAnalysis $analysis, string $message, array $evidence, array $lines): Finding
     {
         return new Finding(
             rule: $rule,
@@ -200,6 +201,7 @@ final readonly class Auditor
             lines: $lines,
             message: $message,
             evidence: $evidence,
+            suggestion: $this->suggester->make($rule, $subject, $analysis),
         );
     }
 
