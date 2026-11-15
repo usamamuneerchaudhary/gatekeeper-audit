@@ -2,6 +2,12 @@
 
 All notable changes to Gatekeeper Audit are documented here.
 
+## 1.0.1 - 2026-11-15
+
+- Colored the console report and added a suggested diff for each finding. Added lines are green and removed lines are red.
+- Added `--format=markdown` and `--output` so an agent can read one fix list. `patch` means apply the diff as written. `hint` means adapt it first.
+- Added the same suggestion to the JSON report. The audit still does not edit application code.
+
 ## 1.0.0 - 2026-11-14
 
 - Added `gatekeeper:audit`, which boots the application, reads the registered route table, and reports authenticated object routes with no object-level authorization check.

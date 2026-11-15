@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Usamamuneerchaudhary\GatekeeperAudit\Console;
 
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Formatter\OutputFormatter;
 use Usamamuneerchaudhary\GatekeeperAudit\Audit\Auditor;
 use Usamamuneerchaudhary\GatekeeperAudit\Audit\AuditResult;
 use Usamamuneerchaudhary\GatekeeperAudit\Audit\Baseline;
@@ -12,12 +13,14 @@ use Usamamuneerchaudhary\GatekeeperAudit\Enums\Severity;
 use Usamamuneerchaudhary\GatekeeperAudit\Report\ConsoleReporter;
 use Usamamuneerchaudhary\GatekeeperAudit\Report\GithubReporter;
 use Usamamuneerchaudhary\GatekeeperAudit\Report\JsonReporter;
+use Usamamuneerchaudhary\GatekeeperAudit\Report\MarkdownReporter;
 use Usamamuneerchaudhary\GatekeeperAudit\Report\SarifReporter;
 
 class AuditCommand extends Command
 {
     protected $signature = 'gatekeeper:audit
-        {--format=console : Output format: console, json, github, or sarif}
+        {--format=console : Output format: console, markdown, json, github, or sarif}
+        {--output= : Also write the report to this file. Markdown and JSON are the formats to hand to an agent}
         {--fail-on=high : Minimum severity that fails the run: high, medium, or low}
         {--fail-on-unauthorized : Fail on high and medium authorization and scoping findings}
         {--no-fail : Always exit 0 after a successful run}
@@ -40,8 +43,8 @@ class AuditCommand extends Command
     {
         $format = strtolower((string) $this->option('format'));
 
-        if (! in_array($format, ['console', 'json', 'github', 'sarif'], true)) {
-            $this->error("Unknown format [{$format}]. Use console, json, github, or sarif.");
+        if (! in_array($format, ['console', 'markdown', 'json', 'github', 'sarif'], true)) {
+            $this->error("Unknown format [{$format}]. Use console, markdown, json, github, or sarif.");
 
             return 2;
         }
@@ -85,12 +88,21 @@ class AuditCommand extends Command
             return 2;
         }
 
-        $this->output->write(match ($format) {
+        $rendered = match ($format) {
             'json' => (new JsonReporter)->render($result),
+            'markdown' => (new MarkdownReporter)->render($result),
             'github' => (new GithubReporter)->render($result),
             'sarif' => (new SarifReporter)->render($result),
             default => (new ConsoleReporter)->render($result, $this->output->isVerbose()),
-        });
+        };
+
+        $written = $this->writeOutput($rendered);
+
+        if ($written !== null) {
+            return $written;
+        }
+
+        $this->output->write($rendered);
 
         if ($staleIds !== [] && $format === 'console') {
             $this->warn('Stale baseline ids (no longer reported):');
@@ -105,6 +117,40 @@ class AuditCommand extends Command
         }
 
         return $this->shouldFail($result, $threshold) ? self::FAILURE : self::SUCCESS;
+    }
+
+    /**
+     * Write a plain-text copy of the report when --output is set.
+     *
+     * Returns 2 when the file cannot be written, and null after a successful write or when no path was given.
+     * Color tags are stripped so a saved console report stays readable. The command still prints the colored report.
+     */
+    private function writeOutput(string $rendered): ?int
+    {
+        $option = $this->option('output');
+
+        if (! is_string($option) || $option === '') {
+            return null;
+        }
+
+        $path = str_starts_with($option, '/') ? $option : base_path($option);
+        $directory = dirname($path);
+
+        if (! is_dir($directory)) {
+            $this->error("Output directory not found: {$directory}");
+
+            return 2;
+        }
+
+        $plain = (new OutputFormatter(false))->format($rendered);
+
+        if (file_put_contents($path, $plain) === false) {
+            $this->error("Could not write the report to {$path}.");
+
+            return 2;
+        }
+
+        return null;
     }
 
     /**

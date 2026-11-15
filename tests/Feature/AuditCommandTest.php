@@ -68,7 +68,10 @@ it('flags a return true FormRequest authorize', function () {
     [$exitCode, $output] = runGatekeeperAudit(['--only' => 'form-invoices']);
 
     expect($exitCode)->toBe(1)
-        ->and($output)->toContain('trivial_form_request');
+        ->and($output)->toContain('trivial_form_request')
+        ->and($output)->toContain('Suggested fix')
+        ->and($output)->toContain("route('invoice')")
+        ->and($output)->toContain('Apply this diff as written.');
 });
 
 it('passes a FormRequest that checks the routed model', function () {
@@ -195,6 +198,8 @@ it('emits the versioned JSON report', function () {
         ->and($report['version'])->toBe('gatekeeper.report.v1')
         ->and($report['findings'][0]['rule'])->toBe('object_authorization')
         ->and($report['findings'][0]['id'])->toContain('object_authorization:')
+        ->and($report['findings'][0]['suggestion']['mode'])->toBe('patch')
+        ->and($report['findings'][0]['suggestion']['diff'])->toContain("authorize('delete', \$invoice)")
         ->and($report['summary']['audited'])->toBe(2);
 });
 
@@ -208,6 +213,49 @@ it('emits github workflow commands and sarif', function () {
 
     expect($sarif['version'])->toBe('2.1.0')
         ->and($sarif['runs'][0]['results'][0]['ruleId'])->toBe('object_authorization');
+});
+
+it('writes a markdown fix list an agent can apply', function () {
+    $path = tempnam(sys_get_temp_dir(), 'gatekeeper-report-');
+
+    try {
+        [$exitCode, $output] = runGatekeeperAudit([
+            '--only' => 'form-invoices',
+            '--format' => 'markdown',
+            '--output' => $path,
+        ]);
+
+        $markdown = (string) file_get_contents($path);
+
+        expect($exitCode)->toBe(1)
+            ->and($output)->toContain('Mode: patch')
+            ->and($markdown)->toContain('Mode: patch')
+            ->and($markdown)->toContain("route('invoice')")
+            ->and($markdown)->toContain('Apply this diff as written.');
+    } finally {
+        if (is_file($path)) {
+            unlink($path);
+        }
+    }
+});
+
+it('marks a policy that always returns true as a hint with no diff', function () {
+    [$exitCode, $output] = runGatekeeperAudit(['--only' => 'policy-invoices', '--format' => 'markdown']);
+
+    expect($exitCode)->toBe(1)
+        ->and($output)->toContain('Mode: hint')
+        ->and($output)->toContain('no diff to apply')
+        ->and($output)->not->toContain('### Diff');
+});
+
+it('returns exit code 2 when the report output directory is missing', function () {
+    [$exitCode] = runGatekeeperAudit([
+        '--only' => 'can-invoices',
+        '--no-fail' => true,
+        '--output' => sys_get_temp_dir().'/gatekeeper-missing-'.uniqid('', true).'/report.md',
+    ]);
+
+    expect($exitCode)->toBe(2);
 });
 
 it('returns exit code 2 for an unknown format', function () {

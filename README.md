@@ -77,7 +77,7 @@ php artisan vendor:publish --tag=gatekeeper-config
 php artisan gatekeeper:audit
 ```
 
-The command boots your application and reads the registered route table, the same way `route:list` does. Run it in the testing environment in CI so it never touches production data. It only reads code and route definitions.
+The command boots your application and reads the registered route table, the same way `route:list` does. Run it in the testing environment in CI so it never touches production data. It reads routes and source. It writes a file only when you pass `--output`, and that file is a report, not a change to your controllers.
 
 Useful options:
 
@@ -86,13 +86,25 @@ Useful options:
 | `--fail-on-unauthorized` | Fail CI on high and medium authorization and scoping findings. |
 | `--fail-on=medium` | Choose the severity that fails the run. Default is `high`. |
 | `--no-fail` | Print the report and always exit `0` after a successful run. |
-| `--format=json` | Emit the versioned JSON report (`gatekeeper.report.v1`). |
+| `--format=markdown` | Emit one fix list for a person or an agent. `patch` diffs can be applied as written. `hint` diffs must be adapted. |
+| `--format=json` | Emit the versioned JSON report (`gatekeeper.report.v1`), including the same suggestion on each finding. |
 | `--format=github` | Emit GitHub Actions workflow annotations. |
 | `--format=sarif` | Emit SARIF 2.1.0 for code scanning. |
+| `--output=gatekeeper-report.md` | Also write the selected report to this path. |
 | `--only=api/invoices` | Audit only URIs with this prefix. |
 | `--include-public` | Also audit routes without auth middleware. |
 | `--include-vendor` | Also audit vendor routes. |
 | `-v` | Explain passed, skipped, and suppressed routes. |
+
+The console report colors high findings red, medium yellow, and low gray, and prints the suggestion as a diff: added lines in green, removed lines in red. A terminal without color still prints `[HIGH]` and the rule name.
+
+Hand the markdown file to an agent when you want the fixes applied:
+
+```bash
+php artisan gatekeeper:audit --format=markdown --output=gatekeeper-report.md
+```
+
+JSON carries the same `suggestion` object (`mode`, `summary`, `steps`, `diff`) for tools that prefer structured input. Gatekeeper does not edit application code.
 
 Exit codes: `0` means no finding crossed the failure threshold, `1` means at least one did, and `2` means the audit itself could not run.
 
@@ -168,6 +180,7 @@ Read these before trusting a clean run:
 - Global scopes are trusted by default. If a global scope does not actually constrain by owner or tenant, enable `ownership.flag_global_scopes`.
 - Analysis follows one level of private method calls in the same controller and reads application traits. Dynamic calls and checks hidden behind service classes may be missed.
 - Public routes are skipped by default, because many are intentionally public.
+- A `patch` suggestion is the usual framework call for that route. A `hint` is an example. Policy bodies and owner columns are hints, because Gatekeeper cannot know the real ownership rule.
 
 ## Configuration
 
