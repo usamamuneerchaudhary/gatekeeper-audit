@@ -10,6 +10,7 @@ use Usamamuneerchaudhary\GatekeeperAudit\Audit\ActionInspector;
 use Usamamuneerchaudhary\GatekeeperAudit\Audit\Auditor;
 use Usamamuneerchaudhary\GatekeeperAudit\Audit\ModelInspector;
 use Usamamuneerchaudhary\GatekeeperAudit\Audit\PhpFileIndex;
+use Usamamuneerchaudhary\GatekeeperAudit\Audit\RouteFileMap;
 use Usamamuneerchaudhary\GatekeeperAudit\Audit\RouteScanner;
 use Usamamuneerchaudhary\GatekeeperAudit\Audit\Suggester;
 use Usamamuneerchaudhary\GatekeeperAudit\Console\AuditCommand;
@@ -30,8 +31,14 @@ final class GatekeeperServiceProvider extends ServiceProvider
             return new ModelInspector($this->app->make(PhpFileIndex::class), $this->gatekeeperConfig());
         });
 
+        $this->app->singleton(RouteFileMap::class, static fn (): RouteFileMap => new RouteFileMap);
+
         $this->app->singleton(RouteScanner::class, function (): RouteScanner {
-            return new RouteScanner($this->app->make(Router::class), $this->gatekeeperConfig());
+            return new RouteScanner(
+                $this->app->make(Router::class),
+                $this->gatekeeperConfig(),
+                $this->app->make(RouteFileMap::class),
+            );
         });
 
         $this->app->singleton(ActionInspector::class, function (): ActionInspector {

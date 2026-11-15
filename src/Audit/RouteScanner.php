@@ -17,6 +17,7 @@ final readonly class RouteScanner
     public function __construct(
         private Router $router,
         private array $config,
+        private RouteFileMap $routeFiles,
     ) {}
 
     /**
@@ -132,6 +133,11 @@ final readonly class RouteScanner
             scopedBindings: $scopedBindings,
             binderScopedParameters: $this->binderScopedParameters($route),
             skipReason: $skipReason,
+            routeFile: $this->routeFiles->find(
+                $isClosure ? '' : $actionLabel,
+                $uri,
+                $isClosure ? (is_string($file) ? $file : null) : null,
+            ),
         );
     }
 
