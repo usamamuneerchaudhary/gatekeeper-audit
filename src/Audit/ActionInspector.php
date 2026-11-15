@@ -46,7 +46,7 @@ final class ActionInspector
             return ActionAnalysis::unparsed();
         }
 
-        $statements = $this->files->parse($subject->file);
+        $statements = $this->files->parse($subject->file, $subject->isClosure ? 'closure' : 'controller');
 
         if ($statements === null) {
             return ActionAnalysis::unparsed();
@@ -214,7 +214,7 @@ final class ActionInspector
         } catch (\Throwable) {
         }
 
-        $classNode = $this->files->findClassLike($declaring) ?? $this->files->findClassLike($subject->controllerClass);
+        $classNode = $this->files->findClassLike($declaring, 'controller') ?? $this->files->findClassLike($subject->controllerClass ?? '', 'controller');
 
         if (! $classNode instanceof Class_) {
             return null;
@@ -283,7 +283,7 @@ final class ActionInspector
                 continue;
             }
 
-            $traitNode = $this->files->findClassLike($trait);
+            $traitNode = $this->files->findClassLike($trait, 'trait');
 
             if ($traitNode === null) {
                 continue;
@@ -297,7 +297,7 @@ final class ActionInspector
         $parent = $classNode->extends?->toCodeString();
 
         if (is_string($parent) && $parent !== '') {
-            $parentNode = $this->files->findClassLike(ltrim($parent, '\\'));
+            $parentNode = $this->files->findClassLike(ltrim($parent, '\\'), 'controller');
 
             if ($parentNode instanceof Class_) {
                 foreach ($this->files->methodsOf($parentNode) as $name => $method) {
@@ -561,14 +561,25 @@ final class ActionInspector
     private function isFormRequest(string $class): bool
     {
         if (class_exists($class) && is_subclass_of($class, 'Illuminate\\Foundation\\Http\\FormRequest')) {
+            $this->files->assignRole($class, 'request');
+
             return true;
         }
 
-        $node = $this->files->findClassLike($class);
+        if (class_exists($class) && is_subclass_of($class, 'Illuminate\\Database\\Eloquent\\Model')) {
+            $this->files->assignRole($class, 'model');
+        }
 
-        return $node instanceof Class_
+        $node = $this->files->findClassLike($class);
+        $isRequest = $node instanceof Class_
             && $node->extends !== null
             && str_ends_with(ltrim($node->extends->toCodeString(), '\\'), 'FormRequest');
+
+        if ($isRequest) {
+            $this->files->assignRole($class, 'request');
+        }
+
+        return $isRequest;
     }
 
     /**
@@ -585,7 +596,7 @@ final class ActionInspector
                 break;
             }
 
-            $node = $this->files->findClassLike($current);
+            $node = $this->files->findClassLike($current, 'request');
 
             if (! $node instanceof Class_) {
                 break;
@@ -842,7 +853,7 @@ final class ActionInspector
                 continue;
             }
 
-            $node = $this->files->findClassLike($policy);
+            $node = $this->files->findClassLike($policy, 'policy');
 
             if (! $node instanceof Class_) {
                 continue;

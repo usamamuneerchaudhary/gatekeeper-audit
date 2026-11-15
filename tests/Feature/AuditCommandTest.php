@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Illuminate\Support\Facades\Artisan;
 use Symfony\Component\Console\Output\BufferedOutput;
 use Symfony\Component\Console\Output\OutputInterface;
+use Usamamuneerchaudhary\GatekeeperAudit\Audit\PhpFileIndex;
 use Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Models\Invoice;
 
 /**
@@ -372,6 +373,26 @@ it('prunes stale baseline ids', function () {
     } finally {
         if (is_file($baseline)) {
             unlink($baseline);
+        }
+    }
+});
+
+it('records a file whose source cannot be parsed', function () {
+    $path = tempnam(sys_get_temp_dir(), 'gatekeeper-php-');
+    file_put_contents($path, "<?php\nclass {\n");
+    $index = new PhpFileIndex;
+
+    try {
+        expect($index->parse($path, 'controller'))->toBeNull();
+
+        $covered = $index->coveredFiles(true);
+
+        expect($covered)->toHaveCount(1)
+            ->and($covered[0]['parsed'])->toBeFalse()
+            ->and($covered[0]['roles'])->toBe(['controller']);
+    } finally {
+        if (is_file($path)) {
+            unlink($path);
         }
     }
 });

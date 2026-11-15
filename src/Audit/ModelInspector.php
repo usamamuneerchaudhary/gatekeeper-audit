@@ -53,7 +53,7 @@ final class ModelInspector
         $owned = in_array($class, $listed, true);
         $hasGlobalScope = false;
 
-        $node = $this->files->findClassLike($class);
+        $node = $this->files->findClassLike($class, 'model');
 
         if ($node instanceof Class_) {
             $methods = $this->files->methodsOf($node);
@@ -95,7 +95,7 @@ final class ModelInspector
                     $hasGlobalScope = true;
                 }
 
-                $traitNode = $this->files->findClassLike($trait);
+                $traitNode = $this->files->findClassLike($trait, 'trait');
 
                 if ($traitNode === null) {
                     continue;

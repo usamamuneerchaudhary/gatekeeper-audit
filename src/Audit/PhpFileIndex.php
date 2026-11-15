@@ -28,6 +28,9 @@ final class PhpFileIndex
     /** @var array<string, true> */
     private array $failed = [];
 
+    /** @var array<string, array{roles: array<string, true>, parsed: bool}> */
+    private array $covered = [];
+
     /**
      * Create the parser and node finder used for every file in a run.
      */
@@ -40,9 +43,11 @@ final class PhpFileIndex
     /**
      * Parse a file once per realpath. Returns null when the file is missing or unparsable.
      *
+     * A role is recorded when the caller knows why the file was opened.
+     *
      * @return list<Node>|null
      */
-    public function parse(string $file): ?array
+    public function parse(string $file, ?string $role = null): ?array
     {
         $real = realpath($file);
 
@@ -51,6 +56,8 @@ final class PhpFileIndex
         }
 
         if (array_key_exists($real, $this->cache)) {
+            $this->remember($real, $role, $this->cache[$real] !== null);
+
             return $this->cache[$real];
         }
 
@@ -69,13 +76,17 @@ final class PhpFileIndex
 
             $traverser = new NodeTraverser;
             $traverser->addVisitor(new NameResolver(null, ['replaceNodes' => true, 'preserveOriginalNames' => true]));
-            $statements = $traverser->traverse($statements);
+            $statements = array_values($traverser->traverse($statements));
+            $this->cache[$real] = $statements;
+            $this->remember($real, $role, true);
 
-            return $this->cache[$real] = array_values($statements);
+            return $statements;
         } catch (Throwable $e) {
             $this->failed[$real] = true;
+            $this->cache[$real] = null;
+            $this->remember($real, $role, false);
 
-            return $this->cache[$real] = null;
+            return null;
         }
     }
 
@@ -91,8 +102,10 @@ final class PhpFileIndex
 
     /**
      * Find a class, trait, or interface declaration for a fully qualified name.
+     *
+     * Returns null when the class has no file or the file cannot be parsed.
      */
-    public function findClassLike(string $class): ?ClassLike
+    public function findClassLike(string $class, ?string $role = null): ?ClassLike
     {
         $file = $this->fileFor($class);
 
@@ -100,7 +113,7 @@ final class PhpFileIndex
             return null;
         }
 
-        $statements = $this->parse($file);
+        $statements = $this->parse($file, $role);
 
         if ($statements === null) {
             return null;
@@ -181,5 +194,101 @@ final class PhpFileIndex
     public function finder(): NodeFinder
     {
         return $this->finder;
+    }
+
+    /**
+     * Remember why a class file was opened.
+     *
+     * Returns without recording when the class has no source file.
+     */
+    public function assignRole(string $class, string $role): void
+    {
+        $file = $this->fileFor($class);
+
+        if ($file === null) {
+            return;
+        }
+
+        $real = realpath($file);
+
+        if ($real === false) {
+            return;
+        }
+
+        $this->covered[$real] ??= ['roles' => [], 'parsed' => false];
+        $this->covered[$real]['roles'][$role] = true;
+    }
+
+    /**
+     * Files opened during this run.
+     *
+     * Vendor paths are omitted unless the audit was asked to include them.
+     * Paths are relative to the application base path when they live under it.
+     *
+     * @return list<array{path: string, roles: list<string>, parsed: bool}>
+     */
+    public function coveredFiles(bool $includeVendor = false): array
+    {
+        $files = [];
+
+        foreach ($this->covered as $path => $entry) {
+            $normalized = str_replace('\\', '/', $path);
+
+            if (! $includeVendor && str_contains($normalized, '/vendor/')) {
+                continue;
+            }
+
+            $roles = array_keys($entry['roles']);
+            sort($roles);
+
+            if ($roles === []) {
+                $roles = ['php'];
+            }
+
+            $files[] = [
+                'path' => self::relativePath($path),
+                'roles' => $roles,
+                'parsed' => $entry['parsed'],
+            ];
+        }
+
+        usort($files, static fn (array $left, array $right): int => strcmp($left['path'], $right['path']));
+
+        return $files;
+    }
+
+    /**
+     * Path relative to the application, or the original path when it lives elsewhere.
+     */
+    public static function relativePath(string $path): string
+    {
+        $real = realpath($path);
+        $normalized = str_replace('\\', '/', $real === false ? $path : $real);
+        $base = realpath(base_path());
+        $prefix = rtrim(str_replace('\\', '/', $base === false ? base_path() : $base), '/').'/';
+
+        if (str_starts_with($normalized, $prefix)) {
+            return substr($normalized, strlen($prefix));
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * Record a parsed file and an optional role. A later success marks the file parsed.
+     */
+    private function remember(string $real, ?string $role, bool $parsed): void
+    {
+        $entry = $this->covered[$real] ?? ['roles' => [], 'parsed' => false];
+
+        if ($role !== null && $role !== '') {
+            $entry['roles'][$role] = true;
+        }
+
+        if ($parsed) {
+            $entry['parsed'] = true;
+        }
+
+        $this->covered[$real] = $entry;
     }
 }
