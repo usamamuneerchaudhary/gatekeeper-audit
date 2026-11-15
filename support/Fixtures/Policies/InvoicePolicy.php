@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Usamamuneerchaudhary\GatekeeperAudit\Tests\Support\Fixtures\Policies;
+namespace Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Policies;
 
 use Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Models\Invoice;
 use Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Models\User;

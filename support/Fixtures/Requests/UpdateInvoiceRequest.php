@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace Usamamuneerchaudhary\GatekeeperAudit\Tests\Support\Fixtures\Requests;
+namespace Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 
-class BaseTrivialRequest extends FormRequest
+class UpdateInvoiceRequest extends FormRequest
 {
     /**
-     * Inherited trivial authorization.
+     * Trivial authorization that checks nothing.
      */
     public function authorize(): bool
     {

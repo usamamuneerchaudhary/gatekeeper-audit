@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 360" role="img" aria-label="Gatekeeper Audit: authenticated is not authorized">
+  <defs>
+    <linearGradient id="gk-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0B1220"/>
+      <stop offset="1" stop-color="#1C0E0A"/>
+    </linearGradient>
+    <linearGradient id="gk-shield" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FF2D20"/>
+      <stop offset="1" stop-color="#F97316"/>
+    </linearGradient>
+    <linearGradient id="gk-sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="0.55" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="360" fill="url(#gk-bg)"/>
+  <path d="M820 330 C960 250 1010 90 1170 88" fill="none" stroke="#7C2D12" stroke-width="2.5"/>
+  <circle cx="820" cy="330" r="7" fill="#0B1220" stroke="#FB923C" stroke-width="3"/>
+  <circle cx="1170" cy="88" r="8" fill="#0B1220" stroke="#FF2D20" stroke-width="3"/>
+  <g transform="translate(96 74) scale(3.3)">
+    <path d="M32 2.6 53.4 9.8v20.4c0 14.6-9.3 24.7-21.4 30.2C19.9 54.9 10.6 44.8 10.6 30.2V9.8L32 2.6z" fill="url(#gk-shield)"/>
+    <path d="M32 2.6 53.4 9.8v20.4c0 14.6-9.3 24.7-21.4 30.2C19.9 54.9 10.6 44.8 10.6 30.2V9.8L32 2.6z" fill="url(#gk-sheen)"/>
+    <g stroke="#2A0A06" stroke-width="4.4" stroke-linecap="round" opacity="0.88">
+      <line x1="22.4" y1="18.5" x2="22.4" y2="46"/>
+      <line x1="41.6" y1="18.5" x2="41.6" y2="46"/>
+    </g>
+    <circle cx="32" cy="27.6" r="6.8" fill="#2A0A06" opacity="0.88"/>
+    <path d="M29.7 32.4h4.6l1.9 10.2h-8.4l1.9-10.2z" fill="#2A0A06" opacity="0.88"/>
+  </g>
+  <text x="356" y="168" font-family="Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="66" font-weight="800" fill="#F8FAFC">Gatekeeper <tspan fill="#FB923C">Audit</tspan></text>
+  <text x="358" y="216" font-family="Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="26" fill="#CBD5E1">Authenticated is not authorized.</text>
+</svg>

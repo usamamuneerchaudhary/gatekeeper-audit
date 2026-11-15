@@ -1,3 +1,7 @@
+<p align="center">
+    <img src="public/assets/banner.svg" alt="Gatekeeper Audit: find Laravel routes that accept an object but never check who owns it" width="100%">
+</p>
+
 # Gatekeeper Audit
 
 [![CI](https://github.com/usamamuneerchaudhary/gatekeeper-audit/actions/workflows/slipway.yml/badge.svg)](https://github.com/usamamuneerchaudhary/gatekeeper-audit/actions/workflows/slipway.yml)
@@ -168,6 +172,22 @@ Read these before trusting a clean run:
 ## Configuration
 
 The published `config/gatekeeper.php` controls which middleware counts as authentication, which middleware is role level, permanently ignored routes and controllers, ownership relations and columns, models to always treat as owned or never owned, and the baseline path.
+
+## Brand assets
+
+<picture>
+    <source media="(prefers-color-scheme: dark)" srcset="public/assets/logo-dark.svg">
+    <img src="public/assets/logo.svg" alt="Gatekeeper Audit logo" width="360">
+</picture>
+
+Logos and cards live in [public/assets](public/assets). Use them in docs, blog posts, and directory listings, and keep the shield mark and wordmark unchanged.
+
+| File | Use |
+| --- | --- |
+| `logo.svg` / `logo-dark.svg` | Wordmark for light and dark backgrounds. |
+| `logo-mark.svg` / `logo-mark.png` | Shield mark on its own, for avatars and icons. |
+| `banner.svg` / `banner.png` | README and documentation header. |
+| `social-card.svg` / `social-card.png` | Open Graph and social sharing image (1280 x 640). |
 
 ## Testing
 
