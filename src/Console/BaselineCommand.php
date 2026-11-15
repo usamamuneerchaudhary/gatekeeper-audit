@@ -40,7 +40,7 @@ class BaselineCommand extends Command
             return 2;
         }
 
-        $this->info(sprintf('Wrote %d finding(s) to %s.', count($result->findings), $path));
+        $this->components->info(sprintf('Wrote %d finding(s) to %s.', count($result->findings), $path));
 
         return self::SUCCESS;
     }
