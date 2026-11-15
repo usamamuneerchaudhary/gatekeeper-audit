@@ -16,7 +16,7 @@ final readonly class RouteScanner
      */
     public function __construct(
         private Router $router,
-        private array  $config,
+        private array $config,
     ) {}
 
     /**

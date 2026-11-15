@@ -14,10 +14,10 @@ final readonly class Auditor
      * @param  array<string, mixed>  $config
      */
     public function __construct(
-        private RouteScanner    $scanner,
+        private RouteScanner $scanner,
         private ActionInspector $inspector,
-        private ModelInspector  $models,
-        private array           $config,
+        private ModelInspector $models,
+        private array $config,
     ) {}
 
     /**
