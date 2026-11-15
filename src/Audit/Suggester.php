@@ -53,12 +53,25 @@ final class Suggester
             'Keep the routed model in the check. A role or class-level can middleware does not clear this finding.',
         ];
 
-        if ($subject->isClosure) {
-            $steps[] = 'An arrow-function closure has no body to insert into. Rewrite it as a block, then add the Gate call.';
+        if ($subject->isClosure && $this->closureIsArrow($subject->file, $subject->line)) {
+            $steps[] = 'This closure is an arrow function, so it has no body to insert into. Rewrite it as a block, then add the Gate call.';
 
             return new Suggestion(
                 SuggestionMode::Hint,
-                "Authorize the routed {$variable} before this closure returns.",
+                "Authorize the routed {$variable} before this arrow function returns.",
+                $steps,
+                $this->addedLine($call),
+            );
+        }
+
+        $diff = $this->insertAfterOpeningBrace($subject->file, $subject->line, $call);
+
+        if ($diff === null) {
+            $steps[] = 'Add the authorize call as the first line of the action. The source shape was not safe to rewrite automatically.';
+
+            return new Suggestion(
+                SuggestionMode::Hint,
+                "Authorize the routed {$variable} before this action uses it.",
                 $steps,
                 $this->addedLine($call),
             );
@@ -68,7 +81,7 @@ final class Suggester
             SuggestionMode::Patch,
             "Authorize the routed {$variable} before this action uses it.",
             $steps,
-            $this->insertAfterOpeningBrace($subject->file, $subject->line, $call),
+            $diff,
         );
     }
 
@@ -178,9 +191,7 @@ final class Suggester
 
             if ($original !== null) {
                 $rewritten = $this->scopeRewrite($original, $column);
-                $diff = $rewritten === null
-                    ? $this->removedLine($original)
-                    : $this->replacedLine($original, $rewritten);
+                $diff = $rewritten === null ? null : $this->replacedLine($original, $rewritten);
             }
         }
 
@@ -254,14 +265,16 @@ final class Suggester
     }
 
     /**
-     * Insert a statement on the line after the action's opening brace.
+     * Insert a statement inside the action body.
+     *
+     * Returns null when the file has no brace to anchor the statement.
      */
-    private function insertAfterOpeningBrace(?string $file, ?int $line, string $statement): string
+    private function insertAfterOpeningBrace(?string $file, ?int $line, string $statement): ?string
     {
         $lines = $this->lines($file);
 
         if ($lines === null || $line === null) {
-            return $this->addedLine($statement);
+            return null;
         }
 
         $start = max(0, $line - 1);
@@ -276,7 +289,15 @@ final class Suggester
         }
 
         if ($brace === null) {
-            return $this->addedLine($statement);
+            return null;
+        }
+
+        $braceText = rtrim($lines[$brace], "\r\n");
+        $open = strrpos($braceText, '{');
+        $close = strrpos($braceText, '}');
+
+        if ($open !== false && $close !== false && $close > $open) {
+            return $this->expandOneLineBody($file, $braceText, $open, $close, $statement);
         }
 
         $from = max(0, $brace - 1);
@@ -347,15 +368,59 @@ final class Suggester
         $text = rtrim($line, "\r\n");
         $where = "where('{$column}', \$request->user()->id)->";
 
-        if (preg_match('/^(\s*)return\s+(.+)::(findOrFail|find|firstOrFail)\((.*)\);\s*$/', $text, $matches) === 1) {
-            return $matches[1].'return '.$matches[2].'::query()->'.$where.$matches[3].'('.$matches[4].');';
+        $prefix = '(\s*)((?:return\s+|\$\w+\s*=\s*))';
+
+        if (preg_match('/^'.$prefix.'(.+)::(findOrFail|find|firstOrFail)\((.*)\);\s*$/', $text, $matches) === 1) {
+            return $matches[1].$matches[2].$matches[3].'::query()->'.$where.$matches[4].'('.$matches[5].');';
         }
 
-        if (preg_match('/^(\s*)return\s+(.+)->(get|paginate|simplePaginate|cursorPaginate|find|findOrFail|first|firstOrFail)\((.*)\);\s*$/', $text, $matches) === 1) {
-            return $matches[1].'return '.$matches[2].'->'.$where.$matches[3].'('.$matches[4].');';
+        if (preg_match('/^'.$prefix.'(.+)->(get|paginate|simplePaginate|cursorPaginate|find|findOrFail|first|firstOrFail)\((.*)\);\s*$/', $text, $matches) === 1) {
+            return $matches[1].$matches[2].$matches[3].'->'.$where.$matches[4].'('.$matches[5].');';
         }
 
         return null;
+    }
+
+    /**
+     * Whether the closure on this line is an arrow function.
+     */
+    private function closureIsArrow(?string $file, ?int $line): bool
+    {
+        if ($line === null) {
+            return false;
+        }
+
+        $text = $this->lineAt((string) $file, $line);
+
+        return is_string($text)
+            && preg_match('/\bfn\b/', $text) === 1
+            && str_contains($text, '=>');
+    }
+
+    /**
+     * Move a same-line body onto its own lines and place the statement inside it.
+     */
+    private function expandOneLineBody(?string $file, string $text, int $open, int $close, string $statement): string
+    {
+        $indent = str_repeat(' ', strlen($text) - strlen(ltrim($text)));
+        $inner = $indent.'    ';
+        $head = rtrim(substr($text, 0, $open + 1));
+        $body = trim(substr($text, $open + 1, $close - $open - 1));
+        $tail = $indent.substr($text, $close);
+        $added = [$head, $inner.$statement];
+
+        if ($body !== '') {
+            $added[] = $inner.$body;
+        }
+
+        $added[] = $tail;
+        $diff = [...$this->pathHeader($file), '-'.$text];
+
+        foreach ($added as $line) {
+            $diff[] = '+'.$line;
+        }
+
+        return implode("\n", $diff);
     }
 
     /**
@@ -451,14 +516,6 @@ final class Suggester
     private function addedLine(string $statement): string
     {
         return '+        '.$statement;
-    }
-
-    /**
-     * A diff that only removes a line.
-     */
-    private function removedLine(string $line): string
-    {
-        return '-'.rtrim($line, "\r\n");
     }
 
     /**

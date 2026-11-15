@@ -180,7 +180,7 @@ Read these before trusting a clean run:
 - Global scopes are trusted by default. If a global scope does not actually constrain by owner or tenant, enable `ownership.flag_global_scopes`.
 - Analysis follows one level of private method calls in the same controller and reads application traits. Dynamic calls and checks hidden behind service classes may be missed.
 - Public routes are skipped by default, because many are intentionally public.
-- A `patch` suggestion is the usual framework call for that route. A `hint` is an example. Policy bodies and owner columns are hints, because Gatekeeper cannot know the real ownership rule.
+- A `patch` suggestion is the usual framework call for that route. A `hint` is an example. Policy bodies and owner columns are hints, because Gatekeeper cannot know the real ownership rule. A hint with no diff means the line was not a simple lookup, so nothing is proposed to delete.
 
 ## Configuration
 

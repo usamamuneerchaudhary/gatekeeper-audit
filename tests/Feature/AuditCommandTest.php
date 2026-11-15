@@ -20,6 +20,23 @@ function runGatekeeperAudit(array $parameters = []): array
     return [$exitCode, Artisan::output()];
 }
 
+/**
+ * First finding with this rule, or null when the report has none.
+ *
+ * @param  array<string, mixed>  $report
+ * @return array<string, mixed>|null
+ */
+function findingByRule(array $report, string $rule): ?array
+{
+    foreach ($report['findings'] as $finding) {
+        if ($finding['rule'] === $rule) {
+            return $finding;
+        }
+    }
+
+    return null;
+}
+
 it('passes a route with an object-level authorize call', function () {
     [$exitCode, $output] = runGatekeeperAudit(['--only' => 'secure-invoices', '--fail-on' => 'high']);
 
@@ -158,7 +175,53 @@ it('audits closure routes', function () {
 
     expect($exitCode)->toBe(1)
         ->and($output)->toContain('object_authorization')
-        ->and($output)->toContain('Closure');
+        ->and($output)->toContain('Closure')
+        ->and($output)->toContain('arrow function')
+        ->and($output)->toContain('Hint only');
+});
+
+it('inserts an authorize call into a closure body', function () {
+    [$exitCode, $output] = runGatekeeperAudit(['--only' => 'block-invoices']);
+
+    expect($exitCode)->toBe(1)
+        ->and($output)->toContain("Gate::authorize('view', \$invoice)")
+        ->and($output)->toContain('Apply this diff as written.')
+        ->and($output)->not->toContain('arrow function');
+});
+
+it('keeps a suggested authorize call inside a one-line method', function () {
+    [, $output] = runGatekeeperAudit(['--only' => 'line-invoices', '--format' => 'json']);
+
+    $report = json_decode($output, true);
+    $diff = (string) $report['findings'][0]['suggestion']['diff'];
+    $added = array_values(array_filter(
+        explode("\n", $diff),
+        static fn (string $line): bool => str_starts_with($line, '+'),
+    ));
+
+    expect($report['findings'][0]['suggestion']['mode'])->toBe('patch')
+        ->and($diff)->toContain('public function touch(Invoice $invoice): Invoice { return $invoice; }')
+        ->and($added[0] ?? '')->toContain('public function touch(Invoice $invoice): Invoice {')
+        ->and($added[1] ?? '')->toContain("\$this->authorize('view', \$invoice)")
+        ->and($added[2] ?? '')->toContain('return $invoice');
+});
+
+it('rewrites an assigned findOrFail instead of deleting it', function () {
+    [, $output] = runGatekeeperAudit(['--only' => 'assigned-invoices', '--format' => 'json', '--no-fail' => true]);
+
+    $lookup = findingByRule(json_decode($output, true), 'unscoped_lookup');
+
+    expect($lookup['suggestion']['diff'])->toContain('-        $found = Invoice::findOrFail($invoice->id);')
+        ->and($lookup['suggestion']['diff'])->toContain("+        \$found = Invoice::query()->where('user_id', \$request->user()->id)->findOrFail(\$invoice->id);");
+});
+
+it('does not suggest deleting a lookup it cannot rewrite', function () {
+    [, $output] = runGatekeeperAudit(['--only' => 'wrapped-invoices', '--format' => 'json', '--no-fail' => true]);
+
+    $lookup = findingByRule(json_decode($output, true), 'unscoped_lookup');
+
+    expect($lookup['suggestion']['mode'])->toBe('hint')
+        ->and($lookup['suggestion']['diff'])->toBeNull();
 });
 
 it('skips public routes by default and audits them on request', function () {

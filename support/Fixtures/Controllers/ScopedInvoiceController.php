@@ -51,4 +51,23 @@ class ScopedInvoiceController extends Controller
     {
         return Invoice::query()->get();
     }
+
+    /**
+     * Assign a raw lookup before returning it.
+     */
+    public function assigned(Invoice $invoice): ?Invoice
+    {
+        $found = Invoice::findOrFail($invoice->id);
+
+        return $found;
+    }
+
+    /**
+     * Load an invoice through a query that spans more than one line.
+     */
+    public function wrapped(Invoice $invoice): ?Invoice
+    {
+        return Invoice::query()
+            ->findOrFail($invoice->id);
+    }
 }

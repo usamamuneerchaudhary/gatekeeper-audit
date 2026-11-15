@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Route;
 use Orchestra\Testbench\TestCase as Orchestra;
 use Usamamuneerchaudhary\GatekeeperAudit\GatekeeperServiceProvider;
 use Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Controllers\FormInvoiceController;
+use Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Controllers\OneLineInvoiceController;
 use Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Controllers\PolicyInvoiceController;
 use Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Controllers\ResourceInvoiceController;
 use Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Controllers\ScopedInvoiceController;
@@ -51,12 +52,18 @@ class TestCase extends Orchestra
             $router->get('global-invoices/{invoice}', [ScopedInvoiceController::class, 'global']);
             $router->get('bound-invoices/{invoice}', [ScopedInvoiceController::class, 'bound'])->scopeBindings();
             $router->get('invoice-collection', [ScopedInvoiceController::class, 'index']);
+            $router->get('assigned-invoices/{invoice}', [ScopedInvoiceController::class, 'assigned']);
+            $router->get('wrapped-invoices/{invoice}', [ScopedInvoiceController::class, 'wrapped']);
             $router->get('db-invoices/{invoice}', [ScopedInvoiceController::class, 'dbLookup']);
             $router->put('policy-invoices/{policyInvoice}', [PolicyInvoiceController::class, 'update']);
+            $router->get('line-invoices/{invoice}', [OneLineInvoiceController::class, 'touch']);
             $router->post('stores', [StoreInvoiceController::class, 'store']);
             $router->get('products/{product}', [StoreInvoiceController::class, 'product']);
             $router->get('product-lookups/{product}', [StoreInvoiceController::class, 'productLookup']);
             $router->get('closure-invoices/{invoice}', static fn (Invoice $invoice): Invoice => $invoice);
+            $router->get('block-invoices/{invoice}', function (Invoice $invoice) {
+                return $invoice;
+            });
         });
 
         Route::get('public-invoices/{invoice}', [UngatedInvoiceController::class, 'show']);

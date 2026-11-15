@@ -7,6 +7,7 @@ All notable changes to Gatekeeper Audit are documented here.
 - Colored the console report and added a suggested diff for each finding. Added lines are green and removed lines are red.
 - Added `--format=markdown` and `--output` so an agent can read one fix list. `patch` means apply the diff as written. `hint` means adapt it first.
 - Added the same suggestion to the JSON report. The audit still does not edit application code.
+- Kept suggested diffs inside the action. An assigned lookup is rewritten in place, a closure body receives the authorize call, and a lookup that cannot be rewritten is left unchanged.
 
 ## 1.0.0 - 2026-11-14
 
