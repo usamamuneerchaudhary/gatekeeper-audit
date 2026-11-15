@@ -6,7 +6,7 @@ namespace Usamamuneerchaudhary\GatekeeperAudit\Audit;
 
 use Usamamuneerchaudhary\GatekeeperAudit\Enums\Severity;
 
-final class Auditor
+final readonly class Auditor
 {
     /**
      * Wire the scanner, inspector, and model facts used by the rules.
@@ -14,10 +14,10 @@ final class Auditor
      * @param  array<string, mixed>  $config
      */
     public function __construct(
-        private readonly RouteScanner $scanner,
-        private readonly ActionInspector $inspector,
-        private readonly ModelInspector $models,
-        private readonly array $config,
+        private RouteScanner    $scanner,
+        private ActionInspector $inspector,
+        private ModelInspector  $models,
+        private array           $config,
     ) {}
 
     /**

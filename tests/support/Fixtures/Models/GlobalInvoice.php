@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Models;
+namespace Usamamuneerchaudhary\GatekeeperAudit\Tests\Support\Fixtures\Models;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;

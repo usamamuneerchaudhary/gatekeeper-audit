@@ -13,6 +13,8 @@ use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitor\NameResolver;
 use PhpParser\Parser;
 use PhpParser\ParserFactory;
+use ReflectionClass;
+use Throwable;
 
 final class PhpFileIndex
 {
@@ -70,7 +72,7 @@ final class PhpFileIndex
             $statements = $traverser->traverse($statements);
 
             return $this->cache[$real] = array_values($statements);
-        } catch (\Throwable) {
+        } catch (Throwable $e) {
             $this->failed[$real] = true;
 
             return $this->cache[$real] = null;
@@ -125,8 +127,8 @@ final class PhpFileIndex
         }
 
         try {
-            $reflection = new \ReflectionClass($class);
-        } catch (\Throwable) {
+            $reflection = new ReflectionClass($class);
+        } catch (Throwable) {
             return null;
         }
 

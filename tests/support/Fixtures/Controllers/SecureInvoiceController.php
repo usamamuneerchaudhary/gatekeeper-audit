@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Controllers;
+namespace Usamamuneerchaudhary\GatekeeperAudit\Tests\Support\Fixtures\Controllers;
 
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 use Illuminate\Routing\Controller;

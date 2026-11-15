@@ -8,6 +8,7 @@ use PhpParser\Node;
 use PhpParser\Node\Expr\MethodCall;
 use PhpParser\Node\Expr\StaticCall;
 use PhpParser\Node\Stmt\Class_;
+use Throwable;
 
 final class ModelInspector
 {
@@ -160,7 +161,7 @@ final class ModelInspector
 
                 return is_string($table) && $table !== '' ? $table : null;
             }
-        } catch (\Throwable) {
+        } catch (Throwable $e) {
             return null;
         }
 

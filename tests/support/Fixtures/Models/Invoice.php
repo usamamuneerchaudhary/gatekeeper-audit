@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Models;
+namespace Usamamuneerchaudhary\GatekeeperAudit\Tests\Support\Fixtures\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class PolicyInvoice extends Model
+class Invoice extends Model
 {
     protected $table = 'invoices';
 

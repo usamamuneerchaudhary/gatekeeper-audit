@@ -7,7 +7,7 @@ namespace Usamamuneerchaudhary\GatekeeperAudit\Audit;
 use Illuminate\Routing\Route;
 use Illuminate\Routing\Router;
 
-final class RouteScanner
+final readonly class RouteScanner
 {
     /**
      * Read audit options that decide which routes are in scope.
@@ -15,8 +15,8 @@ final class RouteScanner
      * @param  array<string, mixed>  $config
      */
     public function __construct(
-        private readonly Router $router,
-        private readonly array $config,
+        private Router $router,
+        private array  $config,
     ) {}
 
     /**

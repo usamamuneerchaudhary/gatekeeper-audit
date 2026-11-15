@@ -8,14 +8,14 @@ use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Route;
 use Orchestra\Testbench\TestCase as Orchestra;
 use Usamamuneerchaudhary\GatekeeperAudit\GatekeeperServiceProvider;
-use Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Controllers\FormInvoiceController;
-use Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Controllers\PolicyInvoiceController;
-use Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Controllers\ResourceInvoiceController;
-use Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Controllers\ScopedInvoiceController;
-use Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Controllers\SecureInvoiceController;
-use Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Controllers\StoreInvoiceController;
-use Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Controllers\UngatedInvoiceController;
-use Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Models\Invoice;
+use Usamamuneerchaudhary\GatekeeperAudit\Tests\Support\Fixtures\Controllers\FormInvoiceController;
+use Usamamuneerchaudhary\GatekeeperAudit\Tests\Support\Fixtures\Controllers\PolicyInvoiceController;
+use Usamamuneerchaudhary\GatekeeperAudit\Tests\Support\Fixtures\Controllers\ResourceInvoiceController;
+use Usamamuneerchaudhary\GatekeeperAudit\Tests\Support\Fixtures\Controllers\ScopedInvoiceController;
+use Usamamuneerchaudhary\GatekeeperAudit\Tests\Support\Fixtures\Controllers\SecureInvoiceController;
+use Usamamuneerchaudhary\GatekeeperAudit\Tests\Support\Fixtures\Controllers\StoreInvoiceController;
+use Usamamuneerchaudhary\GatekeeperAudit\Tests\Support\Fixtures\Controllers\UngatedInvoiceController;
+use Usamamuneerchaudhary\GatekeeperAudit\Tests\Support\Fixtures\Models\Invoice;
 
 class TestCase extends Orchestra
 {
