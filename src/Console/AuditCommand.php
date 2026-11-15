@@ -199,7 +199,14 @@ class AuditCommand extends Command
             $passedSubjects = $passed;
         }
 
-        return new AuditResult($findings, $result->skipped, $passedSubjects !== [] ? $passedSubjects : $passed, $suppressed, $result->audited);
+        return new AuditResult(
+            $findings,
+            $result->skipped,
+            $passedSubjects !== [] ? $passedSubjects : $passed,
+            $suppressed,
+            $result->audited,
+            $result->coverage,
+        );
     }
 
     /**

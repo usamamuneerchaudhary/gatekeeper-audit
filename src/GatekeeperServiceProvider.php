@@ -8,6 +8,7 @@ use Illuminate\Routing\Router;
 use Illuminate\Support\ServiceProvider;
 use Usamamuneerchaudhary\GatekeeperAudit\Audit\ActionInspector;
 use Usamamuneerchaudhary\GatekeeperAudit\Audit\Auditor;
+use Usamamuneerchaudhary\GatekeeperAudit\Audit\ConsoleInventory;
 use Usamamuneerchaudhary\GatekeeperAudit\Audit\ModelInspector;
 use Usamamuneerchaudhary\GatekeeperAudit\Audit\PhpFileIndex;
 use Usamamuneerchaudhary\GatekeeperAudit\Audit\RouteFileMap;
@@ -58,6 +59,8 @@ final class GatekeeperServiceProvider extends ServiceProvider
                 $this->app->make(ModelInspector::class),
                 $config,
                 new Suggester($config),
+                $this->app->make(PhpFileIndex::class),
+                new ConsoleInventory,
             );
         });
     }

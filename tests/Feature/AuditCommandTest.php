@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Artisan;
 use Symfony\Component\Console\Output\BufferedOutput;
 use Symfony\Component\Console\Output\OutputInterface;
 use Usamamuneerchaudhary\GatekeeperAudit\Audit\PhpFileIndex;
+use Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Controllers\UngatedInvoiceController;
 use Usamamuneerchaudhary\GatekeeperAudit\Tests\Fixtures\Models\Invoice;
 
 /**
@@ -19,6 +20,23 @@ function runGatekeeperAudit(array $parameters = []): array
     $exitCode = Artisan::call('gatekeeper:audit', $parameters);
 
     return [$exitCode, Artisan::output()];
+}
+
+/**
+ * Coverage entry whose path ends with this suffix, or null when the audit did not open it.
+ *
+ * @param  array<string, mixed>  $report
+ * @return array<string, mixed>|null
+ */
+function coverageFile(array $report, string $suffix): ?array
+{
+    foreach ($report['coverage']['files'] as $file) {
+        if (str_ends_with($file['path'], $suffix)) {
+            return $file;
+        }
+    }
+
+    return null;
 }
 
 /**
@@ -358,23 +376,167 @@ it('suppresses baselined findings and still fails on new ones', function () {
     }
 });
 
-it('prunes stale baseline ids', function () {
-    $baseline = tempnam(sys_get_temp_dir(), 'gatekeeper-baseline-').'.json';
-    file_put_contents($baseline, json_encode(['findings' => [['id' => 'object_authorization:GET:gone/{id}:Gone@show']]]));
+it('attributes routes to the file that registered them', function () {
+    $directory = base_path('routes');
+
+    if (! is_dir($directory)) {
+        mkdir($directory, 0777, true);
+    }
+
+    $partner = $directory.'/partner.php';
+    $mobile = $directory.'/mobile.php';
+    $controller = UngatedInvoiceController::class;
+
+    file_put_contents($partner, <<<PHP
+<?php
+
+use Illuminate\Support\Facades\Route;
+use {$controller};
+
+Route::middleware('auth')->match(['get', 'post'], 'coverage-partner/{invoice}', [{$controller}::class, 'show']);
+PHP);
+    file_put_contents($mobile, <<<PHP
+<?php
+
+use Illuminate\Support\Facades\Route;
+use {$controller};
+
+Route::middleware('auth')->get('coverage-mobile/{invoice}', [{$controller}::class, 'destroy']);
+PHP);
 
     try {
-        [$exitCode] = runGatekeeperAudit(['--only' => 'can-invoices', '--baseline' => $baseline, '--prune-baseline' => true, '--no-fail' => true]);
+        require $partner;
+        require $mobile;
 
-        $written = json_decode((string) file_get_contents($baseline), true);
+        [, $output] = runGatekeeperAudit(['--format' => 'json', '--no-fail' => true]);
+        $report = json_decode($output, true);
 
-        expect($exitCode)->toBe(0)
-            ->and($written['version'])->toBe('gatekeeper.baseline.v1')
-            ->and($written['findings'])->toBe([]);
+        expect($report['coverage']['routes']['routes/partner.php']['audited'])->toBe(1)
+            ->and($report['coverage']['routes']['routes/mobile.php']['audited'])->toBe(1);
     } finally {
-        if (is_file($baseline)) {
-            unlink($baseline);
+        if (is_file($partner)) {
+            unlink($partner);
+        }
+
+        if (is_file($mobile)) {
+            unlink($mobile);
         }
     }
+});
+
+it('attributes a resource route to the file that registered it', function () {
+    $directory = base_path('routes');
+
+    if (! is_dir($directory)) {
+        mkdir($directory, 0777, true);
+    }
+
+    $path = $directory.'/coverage-resource.php';
+    $controller = UngatedInvoiceController::class;
+
+    file_put_contents($path, <<<PHP
+<?php
+
+use Illuminate\Support\Facades\Route;
+use {$controller};
+
+Route::middleware('auth')->resource('coverage-widgets', {$controller}::class)->only(['show']);
+PHP);
+
+    try {
+        require $path;
+
+        [, $output] = runGatekeeperAudit(['--only' => 'coverage-widgets', '--format' => 'json', '--no-fail' => true]);
+        $report = json_decode($output, true);
+
+        expect($report['coverage']['routes']['routes/coverage-resource.php']['audited'])->toBe(1);
+    } finally {
+        if (is_file($path)) {
+            unlink($path);
+        }
+    }
+});
+
+it('lists an application console command without auditing it', function () {
+    $directory = base_path('routes');
+    $path = $directory.'/coverage-console.php';
+
+    if (! is_dir($directory)) {
+        mkdir($directory, 0777, true);
+    }
+
+    file_put_contents($path, <<<'PHP'
+<?php
+
+use Illuminate\Support\Facades\Artisan;
+
+Artisan::command('coverage:ping', function (): int {
+    return 0;
+});
+PHP);
+
+    try {
+        require $path;
+
+        [, $output] = runGatekeeperAudit(['--only' => 'can-invoices', '--format' => 'json', '--no-fail' => true]);
+        $report = json_decode($output, true);
+        $command = null;
+
+        foreach ($report['coverage']['console'] as $entry) {
+            if ($entry['name'] === 'coverage:ping') {
+                $command = $entry;
+            }
+        }
+
+        expect($command)->not->toBeNull()
+            ->and($command['file'])->toBe('routes/coverage-console.php')
+            ->and(array_column($report['coverage']['skipped'], 'reason'))->toContain('console commands are not audited')
+            ->and(json_encode($report['findings']))->not->toContain('coverage:ping');
+    } finally {
+        if (is_file($path)) {
+            unlink($path);
+        }
+    }
+});
+
+it('groups skipped public routes by reason and does not open their files', function () {
+    [, $output] = runGatekeeperAudit(['--only' => 'public-invoices', '--format' => 'json', '--no-fail' => true]);
+    $report = json_decode($output, true);
+    $public = null;
+
+    foreach ($report['coverage']['skipped'] as $row) {
+        if ($row['reason'] === 'public route without auth middleware') {
+            $public = $row;
+        }
+    }
+
+    expect($public)->not->toBeNull()
+        ->and($public['count'])->toBe(1)
+        ->and($report['coverage']['files'])->toBe([])
+        ->and($report['skipped'][0]['route_file'])->toEndWith('TestCase.php');
+});
+
+it('labels form requests and models in the file list', function () {
+    [, $output] = runGatekeeperAudit(['--only' => 'form-invoices', '--format' => 'json', '--no-fail' => true]);
+    $report = json_decode($output, true);
+    $request = coverageFile($report, 'UpdateInvoiceRequest.php');
+    $controller = coverageFile($report, 'FormInvoiceController.php');
+    $model = coverageFile($report, 'Invoice.php');
+
+    expect($request)->not->toBeNull()
+        ->and($request['roles'])->toBe(['request'])
+        ->and($request['parsed'])->toBeTrue()
+        ->and($controller['roles'])->toContain('controller')
+        ->and($model['roles'])->toContain('model');
+});
+
+it('labels a policy file in the file list', function () {
+    [, $output] = runGatekeeperAudit(['--only' => 'policy-invoices', '--format' => 'json', '--no-fail' => true]);
+    $policy = coverageFile(json_decode($output, true), 'PolicyInvoicePolicy.php');
+
+    expect($policy)->not->toBeNull()
+        ->and($policy['roles'])->toBe(['policy'])
+        ->and($policy['parsed'])->toBeTrue();
 });
 
 it('records a file whose source cannot be parsed', function () {
@@ -393,6 +555,44 @@ it('records a file whose source cannot be parsed', function () {
     } finally {
         if (is_file($path)) {
             unlink($path);
+        }
+    }
+});
+
+it('lists opened files when the output is verbose', function () {
+    $output = new BufferedOutput(OutputInterface::VERBOSITY_VERBOSE);
+
+    Artisan::call('gatekeeper:audit', ['--only' => 'can-invoices', '--no-fail' => true], $output);
+
+    expect($output->fetch())->toContain('UngatedInvoiceController.php')
+        ->toContain('parsed')
+        ->toContain('Skipped by reason')
+        ->toContain('Coverage:');
+});
+
+it('includes the opened files in the markdown report', function () {
+    [, $output] = runGatekeeperAudit(['--only' => 'form-invoices', '--format' => 'markdown', '--no-fail' => true]);
+
+    expect($output)->toContain('## Coverage')
+        ->toContain('UpdateInvoiceRequest.php')
+        ->toContain('(request, parsed)');
+});
+
+it('prunes stale baseline ids', function () {
+    $baseline = tempnam(sys_get_temp_dir(), 'gatekeeper-baseline-').'.json';
+    file_put_contents($baseline, json_encode(['findings' => [['id' => 'object_authorization:GET:gone/{id}:Gone@show']]]));
+
+    try {
+        [$exitCode] = runGatekeeperAudit(['--only' => 'can-invoices', '--baseline' => $baseline, '--prune-baseline' => true, '--no-fail' => true]);
+
+        $written = json_decode((string) file_get_contents($baseline), true);
+
+        expect($exitCode)->toBe(0)
+            ->and($written['version'])->toBe('gatekeeper.baseline.v1')
+            ->and($written['findings'])->toBe([]);
+    } finally {
+        if (is_file($baseline)) {
+            unlink($baseline);
         }
     }
 });

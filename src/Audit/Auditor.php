@@ -19,6 +19,8 @@ final readonly class Auditor
         private ModelInspector $models,
         private array $config,
         private Suggester $suggester,
+        private PhpFileIndex $files,
+        private ConsoleInventory $console,
     ) {}
 
     /**
@@ -33,17 +35,23 @@ final readonly class Auditor
         $passed = [];
         $suppressed = [];
         $audited = 0;
+        $routes = [];
 
         $flagGlobalScopes = (bool) ($this->config['ownership']['flag_global_scopes'] ?? false);
 
         foreach ($this->scanner->scan($includeVendor, $includePublic, $only) as $subject) {
+            $routeFile = $subject->routeFile !== '' ? $subject->routeFile : 'unknown';
+            $routes[$routeFile] ??= ['audited' => 0, 'skipped' => 0];
+
             if ($subject->skipReason !== null) {
                 $skipped[] = ['subject' => $subject, 'reason' => $subject->skipReason];
+                $routes[$routeFile]['skipped']++;
 
                 continue;
             }
 
             $audited++;
+            $routes[$routeFile]['audited']++;
             $subjectFindings = $this->auditSubject($subject, $flagGlobalScopes, $suppressed);
             $kept = [];
 
@@ -65,8 +73,81 @@ final readonly class Auditor
         }
 
         $this->sortFindings($findings);
+        $console = $this->consoleCommands();
 
-        return new AuditResult($findings, $skipped, $passed, $suppressed, $audited);
+        return new AuditResult(
+            $findings,
+            $skipped,
+            $passed,
+            $suppressed,
+            $audited,
+            new Coverage(
+                routes: $this->sortedRoutes($routes),
+                files: $this->files->coveredFiles($includeVendor),
+                skipped: $this->skippedReasons($skipped, $console),
+                console: $console,
+            ),
+        );
+    }
+
+    /**
+     * Application console commands, with paths relative to the application.
+     *
+     * @return list<array{name: string, file: string}>
+     */
+    private function consoleCommands(): array
+    {
+        return array_map(static fn (array $command): array => [
+            'name' => $command['name'],
+            'file' => PhpFileIndex::relativePath($command['file']),
+        ], $this->console->applicationCommands());
+    }
+
+    /**
+     * Route-file counts in path order so the report is stable.
+     *
+     * @param  array<string, array{audited: int, skipped: int}>  $routes
+     * @return array<string, array{audited: int, skipped: int}>
+     */
+    private function sortedRoutes(array $routes): array
+    {
+        ksort($routes);
+
+        return $routes;
+    }
+
+    /**
+     * Collapse per-route skip reasons, then add console commands as their own reason.
+     *
+     * @param  list<array{subject: RouteSubject, reason: string}>  $skipped
+     * @param  list<array{name: string, file: string}>  $console
+     * @return list<array{reason: string, count: int}>
+     */
+    private function skippedReasons(array $skipped, array $console): array
+    {
+        $counts = [];
+
+        foreach ($skipped as $entry) {
+            $counts[$entry['reason']] = ($counts[$entry['reason']] ?? 0) + 1;
+        }
+
+        if ($console !== []) {
+            $counts['console commands are not audited'] = count($console);
+        }
+
+        $rows = [];
+
+        foreach ($counts as $reason => $count) {
+            $rows[] = ['reason' => $reason, 'count' => $count];
+        }
+
+        usort($rows, static function (array $left, array $right): int {
+            $byCount = $right['count'] <=> $left['count'];
+
+            return $byCount !== 0 ? $byCount : strcmp($left['reason'], $right['reason']);
+        });
+
+        return $rows;
     }
 
     /**

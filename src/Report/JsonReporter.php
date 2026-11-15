@@ -21,13 +21,17 @@ final class JsonReporter
                 'skipped' => count($result->skipped),
                 'suppressed' => count($result->suppressed),
                 'audited' => $result->audited,
+                'files' => count($result->coverage->files),
+                'console' => count($result->coverage->console),
             ],
+            'coverage' => $result->coverage->toArray(),
             'findings' => array_map(static fn ($finding): array => $finding->toArray(), $result->findings),
             'skipped' => array_map(static fn (array $entry): array => [
                 'methods' => $entry['subject']->methods,
                 'uri' => $entry['subject']->uri,
                 'action' => $entry['subject']->action,
                 'reason' => $entry['reason'],
+                'route_file' => $entry['subject']->routeFile,
             ], $result->skipped),
             'suppressed' => array_map(static fn (array $entry): array => [
                 'id' => $entry['finding']->id(),

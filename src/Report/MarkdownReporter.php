@@ -33,6 +33,8 @@ final class MarkdownReporter
             '',
         ];
 
+        $lines = [...$lines, ...$this->coverageLines($result)];
+
         if ($result->findings === []) {
             $lines[] = 'No findings.';
             $lines[] = '';
@@ -43,6 +45,73 @@ final class MarkdownReporter
         }
 
         return implode(PHP_EOL, $lines);
+    }
+
+    /**
+     * Route files that registered the audited routes, files opened, and console commands left out.
+     *
+     * @return list<string>
+     */
+    private function coverageLines(AuditResult $result): array
+    {
+        $lines = [
+            '## Coverage',
+            '',
+        ];
+
+        if ($result->coverage->routes === []) {
+            $lines[] = '- HTTP routes: none';
+        }
+
+        foreach ($result->coverage->routes as $file => $counts) {
+            $lines[] = '- `'.$file.'`: '.$counts['audited'].' audited, '.$counts['skipped'].' skipped';
+        }
+
+        $lines[] = '- Files opened: '.count($result->coverage->files);
+        $lines[] = '- Console commands not audited: '.count($result->coverage->console);
+        $lines[] = '';
+        $lines[] = '### Files';
+        $lines[] = '';
+
+        if ($result->coverage->files === []) {
+            $lines[] = 'None.';
+            $lines[] = '';
+        }
+
+        foreach ($result->coverage->files as $file) {
+            $state = $file['parsed'] ? 'parsed' : 'unparsed';
+            $lines[] = '- `'.$file['path'].'` ('.implode(', ', $file['roles']).', '.$state.')';
+        }
+
+        if ($result->coverage->files !== []) {
+            $lines[] = '';
+        }
+
+        if ($result->coverage->console !== []) {
+            $lines[] = '### Console';
+            $lines[] = '';
+            $lines[] = 'Console commands are outside the HTTP route audit.';
+            $lines[] = '';
+
+            foreach ($result->coverage->console as $command) {
+                $lines[] = '- `'.$command['name'].'` (`'.$command['file'].'`)';
+            }
+
+            $lines[] = '';
+        }
+
+        if ($result->coverage->skipped !== []) {
+            $lines[] = '### Skipped';
+            $lines[] = '';
+
+            foreach ($result->coverage->skipped as $row) {
+                $lines[] = '- '.$row['count'].' '.$row['reason'];
+            }
+
+            $lines[] = '';
+        }
+
+        return $lines;
     }
 
     /**

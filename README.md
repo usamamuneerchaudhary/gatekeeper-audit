@@ -94,7 +94,7 @@ Useful options:
 | `--only=api/invoices` | Audit only URIs with this prefix. |
 | `--include-public` | Also audit routes without auth middleware. |
 | `--include-vendor` | Also audit vendor routes. |
-| `-v` | Explain passed, skipped, and suppressed routes. |
+| `-v` | Explain passed, skipped, and suppressed routes, and list the files the audit opened. |
 
 The console report colors high findings red, medium yellow, and low gray, and prints the suggestion as a diff: added lines in green, removed lines in red. A terminal without color still prints `[HIGH]` and the rule name.
 
@@ -107,6 +107,25 @@ php artisan gatekeeper:audit --format=markdown --output=gatekeeper-report.md
 JSON carries the same `suggestion` object (`mode`, `summary`, `steps`, `diff`) for tools that prefer structured input. Gatekeeper does not edit application code.
 
 Exit codes: `0` means no finding crossed the failure threshold, `1` means at least one did, and `2` means the audit itself could not run.
+
+### Coverage
+
+The audit reads the registered HTTP route table, the same table as `route:list`. It does not walk the repository. A clean run still reports which route file registered each route, so a custom file such as `routes/api/booking.php` or `routes/portal.php` shows up under its own name.
+
+```
+Coverage: routes/api/booking.php 12 audited, 0 skipped; routes/portal.php 40 audited, 2 skipped; routes/web.php 3 audited, 1 skipped; 18 files opened; 4 console commands not audited.
+```
+
+The file is detected from the controller action in that file. `Route::get`, `Route::match`, `Route::resource`, and `Route::apiResource` are recognized, including a call on the router instance. A route whose file cannot be resolved is counted as `unknown`. Framework routes are counted as `vendor`.
+
+`files` are the PHP files the audit actually parsed for those routes: controllers, closures, form requests, policies, models, and traits. A skipped route is counted and its file is not opened. Vendor files are omitted unless you pass `--include-vendor`. Each file has a role and `parsed: false` when the source could not be read.
+
+Console commands defined in the application, including closures in `routes/console.php`, are listed by name and file. They are not audited. `--only` does not hide them.
+
+```bash
+php artisan gatekeeper:audit --format=json --output=gatekeeper-report.json
+php artisan gatekeeper:audit -v
+```
 
 ### CI
 
@@ -180,6 +199,7 @@ Read these before trusting a clean run:
 - Global scopes are trusted by default. If a global scope does not actually constrain by owner or tenant, enable `ownership.flag_global_scopes`.
 - Analysis follows one level of private method calls in the same controller and reads application traits. Dynamic calls and checks hidden behind service classes may be missed.
 - Public routes are skipped by default, because many are intentionally public.
+- Console commands are listed in the coverage report and are not checked for authorization.
 - A `patch` suggestion is the usual framework call for that route. A `hint` is an example. Policy bodies and owner columns are hints, because Gatekeeper cannot know the real ownership rule. A hint with no diff means the line was not a simple lookup, so nothing is proposed to delete.
 
 ## Configuration

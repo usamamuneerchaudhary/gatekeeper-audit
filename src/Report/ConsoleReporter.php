@@ -36,13 +36,13 @@ final class ConsoleReporter
             $lines[] = '<options=bold>Passed</>';
 
             foreach ($result->passed as $subject) {
-                $lines[] = '  <fg=green>[pass]</> '.implode('|', $subject->methods).' '.$this->escape($subject->uri).' '.$this->escape($subject->action);
+                $lines[] = '  <fg=green>[pass]</> '.implode('|', $subject->methods).' '.$this->escape($subject->uri).' <fg=gray>'.$this->escape($subject->routeFile).'</> '.$this->escape($subject->action);
             }
 
             $lines[] = '<options=bold>Skipped</>';
 
             foreach ($result->skipped as $entry) {
-                $lines[] = '  <fg=gray>[skip]</> '.implode('|', $entry['subject']->methods).' '.$this->escape($entry['subject']->uri).': '.$this->escape($entry['reason']);
+                $lines[] = '  <fg=gray>[skip]</> '.implode('|', $entry['subject']->methods).' '.$this->escape($entry['subject']->uri).' <fg=gray>'.$this->escape($entry['subject']->routeFile).'</>: '.$this->escape($entry['reason']);
             }
 
             $lines[] = '<options=bold>Suppressed</>';
@@ -50,7 +50,41 @@ final class ConsoleReporter
             foreach ($result->suppressed as $entry) {
                 $lines[] = '  <fg=gray>[suppressed]</> '.$this->escape($entry['finding']->id()).': '.$this->escape($entry['reason']);
             }
+
+            $lines[] = '<options=bold>Files</>';
+
+            if ($result->coverage->files === []) {
+                $lines[] = '  <fg=gray>none</>';
+            }
+
+            foreach ($result->coverage->files as $file) {
+                $state = $file['parsed'] ? 'parsed' : 'unparsed';
+                $lines[] = '  '.$this->escape($file['path']).'  <fg=gray>'.$this->escape(implode(', ', $file['roles']).' '.$state).'</>';
+            }
+
+            $lines[] = '<options=bold>Skipped by reason</>';
+
+            if ($result->coverage->skipped === []) {
+                $lines[] = '  <fg=gray>none</>';
+            }
+
+            foreach ($result->coverage->skipped as $row) {
+                $lines[] = '  '.$row['count'].' '.$this->escape($row['reason']);
+            }
+
+            $lines[] = '<options=bold>Console</>';
+
+            if ($result->coverage->console === []) {
+                $lines[] = '  <fg=gray>none</>';
+            }
+
+            foreach ($result->coverage->console as $command) {
+                $lines[] = '  '.$this->escape($command['name']).'  <fg=gray>'.$this->escape($command['file']).'</>';
+            }
         }
+
+        $lines[] = '';
+        $lines[] = $this->coverageLine($result);
 
         $counts = $result->counts();
         $lines[] = '';
@@ -66,6 +100,26 @@ final class ConsoleReporter
         );
 
         return implode(PHP_EOL, $lines).PHP_EOL;
+    }
+
+    /**
+     * One line that names each route file, how many of its routes were audited, and how many files were opened.
+     */
+    private function coverageLine(AuditResult $result): string
+    {
+        $parts = [];
+
+        foreach ($result->coverage->routes as $file => $counts) {
+            $parts[] = $this->escape($file).' '.$counts['audited'].' audited, '.$counts['skipped'].' skipped';
+        }
+
+        if ($parts === []) {
+            $parts[] = 'no http routes';
+        }
+
+        return '<options=bold>Coverage:</> '.implode('; ', $parts)
+            .'; '.count($result->coverage->files).' files opened; '
+            .count($result->coverage->console).' console commands not audited.';
     }
 
     /**

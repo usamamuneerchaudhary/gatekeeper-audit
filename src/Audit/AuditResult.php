@@ -18,6 +18,7 @@ final readonly class AuditResult
         public array $passed,
         public array $suppressed,
         public int $audited,
+        public Coverage $coverage,
     ) {}
 
     /**
