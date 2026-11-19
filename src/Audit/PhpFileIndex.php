@@ -11,6 +11,7 @@ use PhpParser\Node\Stmt\Trait_;
 use PhpParser\NodeFinder;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitor\NameResolver;
+use PhpParser\NodeVisitor\ParentConnectingVisitor;
 use PhpParser\Parser;
 use PhpParser\ParserFactory;
 use ReflectionClass;
@@ -76,6 +77,7 @@ final class PhpFileIndex
 
             $traverser = new NodeTraverser;
             $traverser->addVisitor(new NameResolver(null, ['replaceNodes' => true, 'preserveOriginalNames' => true]));
+            $traverser->addVisitor(new ParentConnectingVisitor);
             $statements = array_values($traverser->traverse($statements));
             $this->cache[$real] = $statements;
             $this->remember($real, $role, true);
@@ -139,13 +141,7 @@ final class PhpFileIndex
             return null;
         }
 
-        try {
-            $reflection = new ReflectionClass($class);
-        } catch (Throwable) {
-            return null;
-        }
-
-        $file = $reflection->getFileName();
+        $file = (new ReflectionClass($class))->getFileName();
 
         return is_string($file) && $file !== '' ? $file : null;
     }

@@ -578,12 +578,13 @@ it('includes the opened files in the markdown report', function () {
         ->toContain('(request, parsed)');
 });
 
-it('prunes stale baseline ids', function () {
+it('prunes stale baseline ids without adding current findings', function () {
     $baseline = tempnam(sys_get_temp_dir(), 'gatekeeper-baseline-').'.json';
     file_put_contents($baseline, json_encode(['findings' => [['id' => 'object_authorization:GET:gone/{id}:Gone@show']]]));
 
     try {
-        [$exitCode] = runGatekeeperAudit(['--only' => 'can-invoices', '--baseline' => $baseline, '--prune-baseline' => true, '--no-fail' => true]);
+        // The fixture app has many findings. None of them may enter the baseline through a prune.
+        [$exitCode] = runGatekeeperAudit(['--baseline' => $baseline, '--prune-baseline' => true, '--no-fail' => true]);
 
         $written = json_decode((string) file_get_contents($baseline), true);
 

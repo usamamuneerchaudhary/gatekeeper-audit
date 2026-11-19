@@ -9,6 +9,7 @@ use Symfony\Component\Console\Formatter\OutputFormatter;
 use Usamamuneerchaudhary\GatekeeperAudit\Audit\Auditor;
 use Usamamuneerchaudhary\GatekeeperAudit\Audit\AuditResult;
 use Usamamuneerchaudhary\GatekeeperAudit\Audit\Baseline;
+use Usamamuneerchaudhary\GatekeeperAudit\Audit\Finding;
 use Usamamuneerchaudhary\GatekeeperAudit\Enums\Severity;
 use Usamamuneerchaudhary\GatekeeperAudit\Report\ConsoleReporter;
 use Usamamuneerchaudhary\GatekeeperAudit\Report\GithubReporter;
@@ -32,7 +33,7 @@ class AuditCommand extends Command
 
     protected $description = 'Audit authenticated routes for missing object-level authorization and unscoped lookups.';
 
-    private const array UNAUTHORIZED_RULES = ['object_authorization', 'trivial_form_request', 'trivial_policy', 'unscoped_lookup', 'unscoped_collection'];
+    private const array UNAUTHORIZED_RULES = ['object_authorization', 'trivial_form_request', 'trivial_policy', 'missing_authorization', 'unscoped_lookup', 'unscoped_collection'];
 
     /**
      * Run the audit, print the selected report, and return the CI exit code.
@@ -68,20 +69,34 @@ class AuditCommand extends Command
             }
 
             $baselineIds = is_file($baselinePath) ? Baseline::read($baselinePath) : [];
-            $preBaseline = $auditor->audit(
+            $result = $auditor->audit(
                 includeVendor: (bool) $this->option('include-vendor'),
                 includePublic: (bool) $this->option('include-public'),
                 only: $this->option('only') !== null ? (string) $this->option('only') : null,
+                baselineIds: $baselineIds,
             );
 
-            if ($this->option('prune-baseline')) {
-                Baseline::write($baselinePath, $preBaseline->findings);
-                $baselineIds = array_map(static fn ($finding): string => $finding->id(), $preBaseline->findings);
-            }
+            $baselined = $this->baselinedFindings($result);
+            $matchedIds = array_map(static fn (Finding $finding): string => $finding->id(), $baselined);
+            $staleIds = array_values(array_diff($baselineIds, $matchedIds));
 
-            $currentIds = array_map(static fn ($finding): string => $finding->id(), $preBaseline->findings);
-            $staleIds = array_values(array_diff($baselineIds, $currentIds));
-            $result = $this->applyBaseline($preBaseline, $baselineIds);
+            // Pruning only removes ids that no longer match. New findings are never added here,
+            // because that would hide them; record them on purpose with gatekeeper:baseline.
+            if ($this->option('prune-baseline')) {
+                if ($this->option('only') !== null) {
+                    $this->error('--prune-baseline audits every route, so it cannot be combined with --only.');
+
+                    return 2;
+                }
+
+                if (! is_file($baselinePath)) {
+                    $this->error("No baseline to prune at {$baselinePath}. Create one with gatekeeper:baseline.");
+
+                    return 2;
+                }
+
+                Baseline::write($baselinePath, $baselined);
+            }
         } catch (\Throwable $exception) {
             $this->error('Gatekeeper audit could not run: '.$exception->getMessage());
 
@@ -104,8 +119,8 @@ class AuditCommand extends Command
 
         $this->output->write($rendered);
 
-        if ($staleIds !== [] && $format === 'console') {
-            $this->warn('Stale baseline ids (no longer reported):');
+        if ($staleIds !== [] && $format === 'console' && $this->option('only') === null) {
+            $this->warn($this->option('prune-baseline') ? 'Pruned stale baseline ids:' : 'Stale baseline ids (no longer reported):');
 
             foreach ($staleIds as $id) {
                 $this->line('  - '.$id);
@@ -169,44 +184,21 @@ class AuditCommand extends Command
     }
 
     /**
-     * Remove baselined findings from a completed audit.
+     * Findings the baseline suppressed in this run.
      *
-     * @param  list<string>  $baselineIds
+     * @return list<Finding>
      */
-    private function applyBaseline(AuditResult $result, array $baselineIds): AuditResult
+    private function baselinedFindings(AuditResult $result): array
     {
-        if ($baselineIds === []) {
-            return $result;
-        }
-
         $findings = [];
-        $suppressed = $result->suppressed;
-        $passedSubjects = [];
 
-        foreach ($result->findings as $finding) {
-            if (in_array($finding->id(), $baselineIds, true)) {
-                $suppressed[] = ['finding' => $finding, 'reason' => 'baseline'];
-
-                continue;
+        foreach ($result->suppressed as $entry) {
+            if ($entry['reason'] === 'baseline') {
+                $findings[] = $entry['finding'];
             }
-
-            $findings[] = $finding;
         }
 
-        $passed = $result->passed;
-
-        if (count($findings) !== count($result->findings) && $findings === []) {
-            $passedSubjects = $passed;
-        }
-
-        return new AuditResult(
-            $findings,
-            $result->skipped,
-            $passedSubjects !== [] ? $passedSubjects : $passed,
-            $suppressed,
-            $result->audited,
-            $result->coverage,
-        );
+        return $findings;
     }
 
     /**

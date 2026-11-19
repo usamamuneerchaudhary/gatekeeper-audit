@@ -1,0 +1,69 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * Run a pinned, checksum-verified PHPStan phar.
+ *
+ * PHPStan is not a Composer dependency. Since October 2026 GitHub's codeload throttles the
+ * phpstan/phpstan package archive on Actions runners (HTTP 429), which broke every CI job that
+ * ran `composer install`. The phar comes from the PHPStan release instead, a different host.
+ *
+ * To upgrade, change VERSION and SHA256. Take the hash from phpstan.phar in the
+ * phpstan/phpstan repository at that tag, and check it matches the release asset.
+ *
+ * Usage: php tools/phpstan analyse [options]
+ */
+
+const VERSION = '2.3.7';
+const SHA256 = '87fa9aa451bb9b61d7c65d40ec7d14d5bab67e3ad74ce75a09b3140d6f22631a';
+const URL = 'https://github.com/phpstan/phpstan/releases/download/'.VERSION.'/phpstan.phar';
+const ATTEMPTS = 3;
+
+$directory = dirname(__DIR__).'/build';
+$phar = $directory.'/phpstan-'.VERSION.'.phar';
+
+if (! is_file($phar) || hash_file('sha256', $phar) !== SHA256) {
+    if (! is_dir($directory) && ! mkdir($directory, 0o755, true) && ! is_dir($directory)) {
+        fwrite(STDERR, "Could not create {$directory}.\n");
+        exit(1);
+    }
+
+    $context = stream_context_create(['http' => [
+        'follow_location' => 1,
+        'timeout' => 60,
+        'user_agent' => 'gatekeeper-audit-phpstan',
+    ]]);
+
+    $contents = false;
+
+    for ($attempt = 1; $attempt <= ATTEMPTS && $contents === false; $attempt++) {
+        if ($attempt > 1) {
+            sleep(10 * ($attempt - 1));
+        }
+
+        $contents = @file_get_contents(URL, false, $context);
+    }
+
+    if ($contents === false) {
+        fwrite(STDERR, 'Could not download PHPStan '.VERSION.' from '.URL.' after '.ATTEMPTS." attempts.\n");
+        exit(1);
+    }
+
+    $actual = hash('sha256', $contents);
+
+    if ($actual !== SHA256) {
+        fwrite(STDERR, 'PHPStan '.VERSION." checksum mismatch. Expected ".SHA256.", got {$actual}. Not running it.\n");
+        exit(1);
+    }
+
+    $temporary = $phar.'.'.getmypid().'.tmp';
+    file_put_contents($temporary, $contents);
+    rename($temporary, $phar);
+}
+
+// Pass arguments straight to PHPStan without a shell.
+$process = proc_open([PHP_BINARY, $phar, ...array_slice($argv, 1)], [STDIN, STDOUT, STDERR], $pipes);
+
+exit($process === false ? 1 : proc_close($process));

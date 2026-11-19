@@ -450,7 +450,7 @@ final class Suggester
 
         $lines = file($file);
 
-        return $lines === false ? null : array_values($lines);
+        return $lines === false ? null : $lines;
     }
 
     /**
@@ -507,7 +507,7 @@ final class Suggester
      */
     private function pathHeader(?string $file): array
     {
-        return $file === null ? [] : [' '.$file];
+        return $file === null ? [] : [' '.PhpFileIndex::relativePath($file)];
     }
 
     /**

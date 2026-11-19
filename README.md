@@ -83,7 +83,7 @@ Useful options:
 
 | Option | What it does |
 | --- | --- |
-| `--fail-on-unauthorized` | Fail CI on high and medium authorization and scoping findings. |
+| `--fail-on-unauthorized` | Fail CI on high and medium authorization and scoping findings, including `missing_authorization`. |
 | `--fail-on=medium` | Choose the severity that fails the run. Default is `high`. |
 | `--no-fail` | Print the report and always exit `0` after a successful run. |
 | `--format=markdown` | Emit one fix list for a person or an agent. `patch` diffs can be applied as written. `hint` diffs must be adapted. |
@@ -105,6 +105,8 @@ php artisan gatekeeper:audit --format=markdown --output=gatekeeper-report.md
 ```
 
 JSON carries the same `suggestion` object (`mode`, `summary`, `steps`, `diff`) for tools that prefer structured input. Gatekeeper does not edit application code.
+
+File paths in every format are relative to the application base path. SARIF locations carry `uriBaseId: %SRCROOT%`, so GitHub code scanning attaches each result to its file.
 
 Exit codes: `0` means no finding crossed the failure threshold, `1` means at least one did, and `2` means the audit itself could not run.
 
@@ -145,16 +147,19 @@ php artisan gatekeeper:baseline
 php artisan gatekeeper:audit --fail-on-unauthorized
 ```
 
-The baseline file (`gatekeeper-baseline.json` by default) stores stable finding ids that do not depend on line numbers, so unrelated edits do not invalidate it. `php artisan gatekeeper:audit --prune-baseline` rewrites the file to the current finding set and lists stale ids.
+The baseline file (`gatekeeper-baseline.json` by default) stores stable finding ids that do not depend on line numbers, so unrelated edits do not invalidate it.
+
+`php artisan gatekeeper:audit --prune-baseline` removes ids that are no longer reported and lists them. It never adds a finding to the baseline, so a new problem still fails the run. To accept new findings on purpose, run `gatekeeper:baseline` again. Pruning audits every route, so it cannot be combined with `--only`. Pass the same `--include-public` and `--include-vendor` flags you used to create the baseline.
 
 ## What counts as an object-level check
 
-- `$this->authorize('update', $invoice)`, `Gate::authorize(...)`, `Gate::allows(...)`, or a `->can('update', $invoice)` call that receives the routed model.
+- `$this->authorize('update', $invoice)`, `Gate::authorize(...)`, or `Gate::inspect(...)->authorize()` with the routed model.
+- `Gate::allows(...)`, `Gate::denies(...)`, or `->can('update', $invoice)` with the routed model, when the result decides the request: an `if`, ternary, or `match` condition, the first argument of `abort_if`, `abort_unless`, `throw_if`, or `throw_unless`, or the return value of a helper method the action calls. Assigning the result, passing it to a view, or discarding it does not count.
 - Route middleware `can:update,invoice`, where the second argument is the route parameter. `can:update,App\Models\Invoice` is class level and does not clear a bound invoice.
 - `authorizeResource(Invoice::class, 'invoice')`, or middleware declared through the `HasMiddleware` contract.
-- A FormRequest `authorize()` method that references the routed model, for example through `$this->route('invoice')`.
+- A FormRequest `authorize()` method that passes the routed model to an ability call, or compares it with the signed-in user. The model can be read as `$this->route('invoice')`, `$this->route()->parameter('invoice')`, or `$this->invoice`. Reading the model without checking it, for example `return $this->route('invoice') !== null;`, does not count.
 
-What never clears an object route: `auth` middleware alone, Spatie `role` or `permission` middleware, `authorize('viewAny')` without the instance, a FormRequest `authorize()` that returns `true` or only checks that a user is signed in, and a policy method that only returns `true`.
+What never clears an object route: `auth` middleware alone, `auth()->check()` or `Auth::check()`, Spatie `role` or `permission` middleware, `authorize('viewAny')` without the instance, a FormRequest `authorize()` that returns `true` or only checks that a user is signed in, and a policy method that only returns `true`.
 
 ## What counts as a scoped lookup
 
@@ -165,17 +170,27 @@ Scoped, and not flagged:
 ```php
 $request->user()->invoices()->findOrFail($id);
 Invoice::where('user_id', auth()->id())->findOrFail($id);
+Invoice::where('user_id', Auth::id())->findOrFail($id);
+Invoice::whereBelongsTo($request->user())->findOrFail($id);
+Invoice::where('team_id', $team->id)->get(); // $team is a route-bound model
 ```
+
+The owner column must be compared with the signed-in user, the current tenant, or a route-bound model. A value from the request, such as `$request->input('user_id')`, does not scope the query, and neither does a `user()` call in an unrelated constraint.
 
 Flagged:
 
 ```php
 Invoice::findOrFail($id);
+Invoice::destroy($id);
+Invoice::firstWhere('id', $id);
+Invoice::where('id', $id)->update([...]);
 Invoice::query()->get();
-DB::table('invoices')->find($id);
+DB::table('invoices')->where('id', $id)->delete();
 ```
 
-Models protected by a global scope are suppressed rather than flagged, because the scope may already constrain every query. Set `gatekeeper.ownership.flag_global_scopes` to `true` if you want those reported anyway. Scoped route bindings (`->scopeBindings()`) cover the injected parameter only; a raw `Invoice::findOrFail($id)` in the same action is still flagged.
+A `DB::table()` query is checked when its table belongs to a route-bound model, a model in `gatekeeper.ownership.models`, or the conventional application model for the table name, such as `App\Models\Invoice` for `invoices`.
+
+Models protected by a global scope are suppressed rather than flagged, because the scope may already constrain every query. Framework scopes such as the one `SoftDeletes` adds do not count. Set `gatekeeper.ownership.flag_global_scopes` to `true` if you want those reported anyway. Scoped route bindings (`->scopeBindings()`) cover the injected parameter only; a raw `Invoice::findOrFail($id)` in the same action is still flagged.
 
 ## Rules
 
@@ -226,6 +241,7 @@ Logos and cards live in [public/assets](public/assets). Use them in docs, blog p
 
 ```bash
 composer test
+composer analyse
 ```
 
 ## Security

@@ -35,7 +35,7 @@ final class GithubReporter
                 $messageText .= ' Suggestion: '.$finding->suggestion->summary;
             }
 
-            $message = $this->escape($messageText.' ['.$finding->id().']');
+            $message = $this->escapeData($messageText.' ['.$finding->id().']');
             $lines[] = '::'.$level.' '.implode(',', $properties).'::'.$message;
         }
 
@@ -46,7 +46,15 @@ final class GithubReporter
     }
 
     /**
-     * Escape a workflow command value.
+     * Escape a workflow command message. GitHub only decodes %, CR, and LF here.
+     */
+    private function escapeData(string $value): string
+    {
+        return strtr($value, ['%' => '%25', "\r" => '%0D', "\n" => '%0A']);
+    }
+
+    /**
+     * Escape a workflow command property such as file or title.
      */
     private function escape(string $value): string
     {

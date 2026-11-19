@@ -27,7 +27,7 @@ final class SarifReporter
                 'defaultConfiguration' => ['level' => $this->level($finding->severity)],
             ];
 
-            $location = ['physicalLocation' => ['artifactLocation' => ['uri' => $finding->file ?? $finding->uri]]];
+            $location = ['physicalLocation' => ['artifactLocation' => $this->artifactLocation($finding)]];
 
             if ($finding->line() !== null && $finding->file !== null) {
                 $location['physicalLocation']['region'] = ['startLine' => $finding->line()];
@@ -72,6 +72,30 @@ final class SarifReporter
         }
 
         return $text;
+    }
+
+    /**
+     * Artifact location relative to the repository root, so code scanning can attach it to a file.
+     *
+     * Findings carry paths relative to the application. Paths outside it become file URIs.
+     *
+     * @return array<string, string>
+     */
+    private function artifactLocation(Finding $finding): array
+    {
+        $file = $finding->file;
+
+        if ($file === null || $file === '') {
+            return ['uri' => $finding->uri];
+        }
+
+        $file = str_replace('\\', '/', $file);
+
+        if (str_starts_with($file, '/') || preg_match('/^[A-Za-z]:\//', $file) === 1) {
+            return ['uri' => 'file://'.(str_starts_with($file, '/') ? '' : '/').implode('/', array_map('rawurlencode', explode('/', $file)))];
+        }
+
+        return ['uri' => implode('/', array_map('rawurlencode', explode('/', $file))), 'uriBaseId' => '%SRCROOT%'];
     }
 
     /**
