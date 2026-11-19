@@ -60,7 +60,7 @@ return [
     'env' => [],
 
     'stages' => [
-        'quality' => ['pint', 'composer-audit', 'secret-scan'],
+        'quality' => ['pint', 'phpstan', 'composer-audit', 'secret-scan'],
 
         'test' => [
             'matrix' => true,
