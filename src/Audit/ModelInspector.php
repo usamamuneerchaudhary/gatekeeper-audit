@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Usamamuneerchaudhary\GatekeeperAudit\Audit;
 
+use Illuminate\Support\Str;
 use PhpParser\Node;
 use PhpParser\Node\Expr\MethodCall;
 use PhpParser\Node\Expr\StaticCall;
@@ -75,10 +76,6 @@ final class ModelInspector
                     if ($called === 'belongsto') {
                         $owned = true;
                     }
-
-                    if ($called === 'addglobalscope') {
-                        $hasGlobalScope = true;
-                    }
                 }
 
                 if ($this->callsAddGlobalScope($method->stmts)) {
@@ -93,6 +90,11 @@ final class ModelInspector
             foreach ($this->files->traitsOf($node) as $trait) {
                 if (in_array($trait, $scopeTraits, true)) {
                     $hasGlobalScope = true;
+                }
+
+                // Framework traits such as SoftDeletes register scopes that never constrain by owner.
+                if (str_starts_with($trait, 'Illuminate\\')) {
+                    continue;
                 }
 
                 $traitNode = $this->files->findClassLike($trait, 'trait');
@@ -123,19 +125,77 @@ final class ModelInspector
      */
     private function callsAddGlobalScope(array $statements): bool
     {
-        foreach ($this->files->finder()->findInstanceOf($statements, StaticCall::class) as $call) {
-            if ($call->name instanceof Node\Identifier && strtolower($call->name->toString()) === 'addglobalscope') {
-                return true;
-            }
-        }
+        $calls = $this->files->finder()->find($statements, static fn (Node $node): bool => $node instanceof StaticCall || $node instanceof MethodCall);
 
-        foreach ($this->files->finder()->findInstanceOf($statements, MethodCall::class) as $call) {
-            if ($call->name instanceof Node\Identifier && strtolower($call->name->toString()) === 'addglobalscope') {
+        foreach ($calls as $call) {
+            if (! $call instanceof StaticCall && ! $call instanceof MethodCall) {
+                continue;
+            }
+
+            if (! $call->name instanceof Node\Identifier || strtolower($call->name->toString()) !== 'addglobalscope') {
+                continue;
+            }
+
+            if (! $this->isFrameworkScope($call->args[0] ?? null)) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    /**
+     * Whether a scope argument is a framework scope such as SoftDeletingScope.
+     */
+    private function isFrameworkScope(mixed $argument): bool
+    {
+        if (! $argument instanceof Node\Arg) {
+            return false;
+        }
+
+        $value = $argument->value;
+
+        if ($value instanceof Node\Expr\New_ && $value->class instanceof Node\Name) {
+            return str_starts_with(ltrim($value->class->toString(), '\\'), 'Illuminate\\');
+        }
+
+        return false;
+    }
+
+    /**
+     * Owned-model facts for a table, used when a DB::table() query names no model.
+     *
+     * Candidates are the configured ownership models and the conventional application model
+     * for the table name, for example App\Models\Invoice for invoices. Returns null when no
+     * candidate uses this table.
+     */
+    public function forTable(string $table): ?ModelInfo
+    {
+        $ownership = is_array($this->config['ownership'] ?? null) ? $this->config['ownership'] : [];
+        $candidates = array_map(static fn (mixed $value): string => ltrim((string) $value, '\\'), is_array($ownership['models'] ?? null) ? $ownership['models'] : []);
+
+        try {
+            $namespace = function_exists('app') ? app()->getNamespace() : 'App\\';
+        } catch (Throwable) {
+            $namespace = 'App\\';
+        }
+
+        $candidates[] = $namespace.'Models\\'.Str::studly(Str::singular($table));
+        $candidates[] = $namespace.Str::studly(Str::singular($table));
+
+        foreach (array_unique($candidates) as $candidate) {
+            if (! class_exists($candidate) || ! is_subclass_of($candidate, 'Illuminate\\Database\\Eloquent\\Model')) {
+                continue;
+            }
+
+            $info = $this->inspect($candidate);
+
+            if ($info->table === $table) {
+                return $info;
+            }
+        }
+
+        return null;
     }
 
     /**

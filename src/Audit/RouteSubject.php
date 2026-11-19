@@ -10,7 +10,6 @@ final readonly class RouteSubject
      * @param  list<string>  $methods
      * @param  list<string>  $middleware
      * @param  list<array{name: string, model: class-string|string|null, variable: string|null}>  $objectParameters
-     * @param  list<string>  $binderScopedParameters
      * @param  string  $routeFile  File that registered the route, or unknown when it cannot be resolved.
      */
     public function __construct(
@@ -26,7 +25,6 @@ final readonly class RouteSubject
         public array $middleware,
         public array $objectParameters,
         public bool $scopedBindings,
-        public array $binderScopedParameters = [],
         public ?string $skipReason = null,
         public string $routeFile = 'unknown',
     ) {}

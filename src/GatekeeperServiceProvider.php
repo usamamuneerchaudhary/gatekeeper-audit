@@ -45,7 +45,6 @@ final class GatekeeperServiceProvider extends ServiceProvider
         $this->app->singleton(ActionInspector::class, function (): ActionInspector {
             return new ActionInspector(
                 $this->app->make(PhpFileIndex::class),
-                $this->app->make(ModelInspector::class),
                 $this->gatekeeperConfig(),
             );
         });

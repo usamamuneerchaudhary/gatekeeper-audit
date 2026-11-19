@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace Usamamuneerchaudhary\GatekeeperAudit\Audit;
 
 use PhpParser\Node;
+use PhpParser\Node\Expr\ArrowFunction;
 use PhpParser\Node\Expr\Closure;
 use PhpParser\Node\Expr\FuncCall;
 use PhpParser\Node\Expr\MethodCall;
-use PhpParser\Node\Expr\New_;
+use PhpParser\Node\Expr\NullsafeMethodCall;
 use PhpParser\Node\Expr\StaticCall;
 use PhpParser\Node\Expr\Variable;
 use PhpParser\Node\Name;
@@ -16,24 +17,39 @@ use PhpParser\Node\Scalar\String_;
 use PhpParser\Node\Stmt\Class_;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node\Stmt\Return_;
+use PhpParser\NodeTraverser;
+use PhpParser\NodeVisitor\CloningVisitor;
+use PhpParser\NodeVisitorAbstract;
 use PhpParser\PrettyPrinter\Standard;
 
 final class ActionInspector
 {
-    private const array GATE_METHODS = ['authorize', 'allows', 'denies', 'inspect', 'check', 'can', 'cannot', 'authorizeorfail'];
+    private const array GATE_METHODS = ['authorize', 'allows', 'denies', 'inspect', 'check', 'any', 'none'];
 
-    private const array SINGLE_FINDERS = ['find', 'findorfail', 'findornew', 'firstorfail', 'firstorcreate', 'sole'];
+    /** Method calls that ask the gate about an ability. `check` is accepted only on a gate instance. */
+    private const array ABILITY_METHODS = ['authorize', 'authorizeorfail', 'can', 'cannot', 'cant', 'check', 'allows', 'denies', 'any', 'none', 'inspect'];
 
-    private const array CHAIN_TERMINALS = ['get', 'first', 'firstorfail', 'find', 'findorfail', 'paginate', 'simplepaginate', 'cursorpaginate', 'sole'];
+    /** Calls that throw on failure, so they enforce the check wherever they appear. */
+    private const array THROWING_METHODS = ['authorize', 'authorizeorfail'];
+
+    private const array STATIC_SINGLE = ['find', 'findorfail', 'findornew', 'findor', 'firstorfail', 'firstorcreate', 'firstornew', 'firstwhere', 'updateorcreate', 'sole', 'destroy'];
+
+    private const array STATIC_COLLECTION = ['all', 'findmany'];
+
+    private const array CHAIN_SINGLE = ['first', 'firstorfail', 'firstor', 'firstwhere', 'firstorcreate', 'firstornew', 'find', 'findorfail', 'findor', 'findornew', 'updateorcreate', 'updateorinsert', 'sole', 'value', 'update', 'delete', 'forcedelete', 'restore', 'increment', 'decrement'];
+
+    private const array CHAIN_COLLECTION = ['get', 'paginate', 'simplepaginate', 'cursorpaginate', 'pluck', 'findmany', 'lazy', 'lazybyid', 'cursor', 'chunk', 'chunkbyid', 'each'];
+
+    /** Query methods whose arguments can constrain the query to an owner. */
+    private const array SCOPING_METHODS = ['where', 'wherein', 'firstwhere', 'wherebelongsto', 'firstorcreate', 'firstornew', 'updateorcreate', 'updateorinsert'];
 
     /**
-     * Read configuration shared with the model inspector.
+     * Read the ownership and middleware configuration.
      *
      * @param  array<string, mixed>  $config
      */
     public function __construct(
         private readonly PhpFileIndex $files,
-        private readonly ModelInspector $models,
         private readonly array $config,
     ) {}
 
@@ -93,20 +109,6 @@ final class ActionInspector
             }
         }
 
-        foreach ($this->staticMiddleware($classNode, $subject) as $entry) {
-            $parsed = $this->parseCanMiddleware($entry, $subject);
-
-            if ($parsed !== null) {
-                $hasObjectCheck = true;
-                $hasAnyAuthorization = true;
-                $objectEvidence ??= 'HasMiddleware can:'.$entry;
-                $abilities[] = $parsed;
-            } elseif (str_starts_with($entry, 'can:') || str_starts_with($entry, 'role:') || str_starts_with($entry, 'permission:')) {
-                $hasAnyAuthorization = true;
-                $roleEvidence[] = 'HasMiddleware '.$entry;
-            }
-        }
-
         $formRequestTrivial = false;
         $formRequestClass = null;
 
@@ -139,7 +141,13 @@ final class ActionInspector
             }
         }
 
-        foreach ($this->authorizationCalls($nodes, $objectVariables) as $call) {
+        foreach ($this->authorizationCalls($nodes, $objectVariables, $actionMethod) as $call) {
+            if (! $call['enforced']) {
+                $roleEvidence[] = $call['evidence'].' result is not used to allow or deny the request';
+
+                continue;
+            }
+
             $hasAnyAuthorization = true;
 
             if ($call['ability'] !== null) {
@@ -166,7 +174,7 @@ final class ActionInspector
             formRequestClass: $formRequestClass,
             policyTrivial: $policyTrivial,
             policyEvidence: $policyEvidence,
-            lookups: $this->findLookups($nodes, $subject),
+            lookups: $this->findLookups($nodes, $subject, $this->userVariables($nodes, $actionMethod)),
         );
     }
 
@@ -174,24 +182,23 @@ final class ActionInspector
      * Locate the action method or closure and its parameters.
      *
      * @param  list<Node>  $statements
-     * @return array{ClassMethod|Closure, Class_|null, list<array{name: string, type: string|null}>}|null
+     * @return array{ClassMethod|Closure|ArrowFunction, Class_|null, list<array{name: string, type: string|null}>}|null
      */
     private function actionContext(RouteSubject $subject, array $statements): ?array
     {
         if ($subject->isClosure) {
-            $closures = $this->files->finder()->findInstanceOf($statements, Closure::class);
             $closure = null;
 
-            foreach ($closures as $candidate) {
+            foreach ($this->files->finder()->find($statements, static fn (Node $node): bool => $node instanceof Closure || $node instanceof ArrowFunction) as $candidate) {
                 if ($candidate->getStartLine() === $subject->line) {
                     $closure = $candidate;
                     break;
                 }
             }
 
-            $closure ??= $closures[0] ?? null;
-
-            if ($closure === null) {
+            // Never fall back to another closure: the first closure in a route file is
+            // usually the group wrapper, and its body contains every sibling route.
+            if (! $closure instanceof Closure && ! $closure instanceof ArrowFunction) {
                 return null;
             }
 
@@ -206,11 +213,7 @@ final class ActionInspector
 
         try {
             $reflection = new \ReflectionMethod($subject->controllerClass, $subject->method);
-            $declaringClass = $reflection->getDeclaringClass()->getName();
-
-            if (is_string($declaringClass) && $declaringClass !== '') {
-                $declaring = $declaringClass;
-            }
+            $declaring = $reflection->getDeclaringClass()->getName();
         } catch (\Throwable) {
         }
 
@@ -235,15 +238,13 @@ final class ActionInspector
      *
      * @return list<Node>
      */
-    private function collectedNodes(ClassMethod|Closure $action, ?Class_ $classNode): array
+    private function collectedNodes(ClassMethod|Closure|ArrowFunction $action, ?Class_ $classNode): array
     {
-        $body = $action instanceof Closure ? $action->stmts : ($action->stmts ?? []);
-
-        if ($body === null) {
-            return [];
+        if ($action instanceof ArrowFunction) {
+            return [$action->expr];
         }
 
-        $nodes = array_values($body);
+        $nodes = array_values($action instanceof Closure ? $action->stmts : ($action->stmts ?? []));
 
         if ($classNode === null) {
             return $nodes;
@@ -314,7 +315,7 @@ final class ActionInspector
      *
      * @return list<array{name: string, type: string|null}>
      */
-    private function parametersOf(ClassMethod|Closure $node): array
+    private function parametersOf(ClassMethod|Closure|ArrowFunction $node): array
     {
         $parameters = [];
 
@@ -461,84 +462,6 @@ final class ActionInspector
     }
 
     /**
-     * Middleware strings declared through the HasMiddleware contract.
-     *
-     * @return list<string>
-     */
-    private function staticMiddleware(?Class_ $classNode, RouteSubject $subject): array
-    {
-        if ($classNode === null) {
-            return [];
-        }
-
-        $methods = $this->allMethods($classNode);
-        $middleware = $methods['middleware'] ?? null;
-
-        if ($middleware === null || $middleware->stmts === null) {
-            return [];
-        }
-
-        $entries = [];
-
-        foreach ($this->files->finder()->findInstanceOf($middleware->stmts, New_::class) as $new) {
-            if (! $new->class instanceof Name || class_basename(ltrim($new->class->toCodeString(), '\\')) !== 'Middleware') {
-                continue;
-            }
-
-            $first = $new->args[0] ?? null;
-
-            if (! $first instanceof Node\Arg || ! $first->value instanceof String_) {
-                continue;
-            }
-
-            $only = null;
-            $except = null;
-
-            foreach ($new->args as $arg) {
-                if (! $arg instanceof Node\Arg || $arg->name === null) {
-                    continue;
-                }
-
-                $values = [];
-
-                if ($arg->value instanceof Node\Expr\Array_) {
-                    foreach ($arg->value->items as $item) {
-                        if ($item instanceof Node\ArrayItem && $item->value instanceof String_) {
-                            $values[] = $item->value->value;
-                        }
-                    }
-                }
-
-                if ($arg->name->toString() === 'only') {
-                    $only = $values;
-                }
-
-                if ($arg->name->toString() === 'except') {
-                    $except = $values;
-                }
-            }
-
-            if ($subject->method !== null && $only !== null && ! in_array($subject->method, $only, true)) {
-                continue;
-            }
-
-            if ($subject->method !== null && $except !== null && in_array($subject->method, $except, true)) {
-                continue;
-            }
-
-            $entries[] = $first->value->value;
-        }
-
-        foreach ($this->files->finder()->findInstanceOf($middleware->stmts, String_::class) as $string) {
-            if (str_contains($string->value, ':')) {
-                $entries[] = $string->value;
-            }
-        }
-
-        return array_values(array_unique($entries));
-    }
-
-    /**
      * Conventional policy ability for a resource action.
      */
     private function conventionalAbility(string $action): ?string
@@ -629,69 +552,110 @@ final class ActionInspector
     }
 
     /**
-     * Whether authorize only proves a user is signed in, or always returns true.
+     * Whether authorize() only returns true or only proves that a user is signed in.
+     *
+     * Guard clauses such as `if (! auth()->check()) { return false; }` are allowed before the final return.
+     * A body with no return denies every request, so it is not trivial.
      *
      * @param  list<Node>  $statements
      */
     private function isTrivialAuthorize(array $statements): bool
     {
-        $meaningful = array_values(array_filter($statements, static fn (Node $node): bool => $node instanceof Return_));
+        $allowsSomeone = false;
 
-        if ($meaningful === []) {
-            return true;
-        }
+        foreach ($statements as $statement) {
+            if ($statement instanceof Node\Stmt\Nop) {
+                continue;
+            }
 
-        if (count($statements) !== 1 || ! $statements[0] instanceof Return_) {
+            if ($statement instanceof Return_) {
+                $verdict = $this->trivialReturn($statement->expr);
+
+                if ($verdict === null) {
+                    return false;
+                }
+
+                $allowsSomeone = $allowsSomeone || $verdict;
+
+                continue;
+            }
+
+            if ($statement instanceof Node\Stmt\If_
+                && $statement->elseifs === []
+                && AuthExpressions::isAuthenticationOnly($statement->cond)
+                && $this->onlyConstantReturns($statement->stmts)
+                && ($statement->else === null || $this->onlyConstantReturns($statement->else->stmts))) {
+                continue;
+            }
+
             return false;
         }
 
-        $expression = $statements[0]->expr;
-
-        if ($expression === null) {
-            return true;
-        }
-
-        if ($expression instanceof Node\Expr\ConstFetch) {
-            return strtolower($expression->name->toCodeString()) === 'true';
-        }
-
-        $text = $this->expressionText($expression);
-
-        return str_contains($text, 'check()')
-            || str_contains($text, '!== null')
-            || str_contains($text, '!= null');
+        return $allowsSomeone;
     }
 
     /**
-     * Whether the nodes ask the gate about the routed object.
+     * True when a return allows any signed-in user, false when it denies, null when it does real work.
+     */
+    private function trivialReturn(?Node\Expr $expression): ?bool
+    {
+        if ($expression === null) {
+            return false;
+        }
+
+        if ($expression instanceof Node\Expr\ConstFetch) {
+            return match (strtolower($expression->name->toString())) {
+                'true' => true,
+                'false', 'null' => false,
+                default => null,
+            };
+        }
+
+        return AuthExpressions::isAuthenticationOnly($expression) ? true : null;
+    }
+
+    /**
+     * Whether a block only returns true or false.
+     *
+     * @param  array<Node>  $statements
+     */
+    private function onlyConstantReturns(array $statements): bool
+    {
+        foreach ($statements as $statement) {
+            if (! $statement instanceof Return_ || $this->trivialReturn($statement->expr) === null) {
+                return false;
+            }
+
+            if ($statement->expr !== null && ! $statement->expr instanceof Node\Expr\ConstFetch) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Whether authorize() checks the routed object.
+     *
+     * The route model must reach an ability call (`can`, `Gate::allows`, ...) or be compared with the
+     * signed-in user. Reading it alone, for example `$this->route('invoice') !== null`, does not count.
+     * The model may be read as `$this->route('invoice')`, `$this->route()->parameter('invoice')`, or `$this->invoice`.
      *
      * @param  list<Node>  $statements
      */
     private function referencesRouteModel(array $statements, RouteSubject $subject): bool
     {
-        foreach ($this->files->finder()->findInstanceOf($statements, MethodCall::class) as $call) {
-            if (! $call->name instanceof Node\Identifier || strtolower($call->name->toString()) !== 'route') {
-                continue;
-            }
+        $names = $subject->objectParameterNames();
 
-            foreach ($call->args as $arg) {
-                if ($arg instanceof Node\Arg && $arg->value instanceof String_ && in_array($arg->value->value, $subject->objectParameterNames(), true)) {
-                    return true;
-                }
-            }
-
-            if ($call->args === [] && $subject->isObjectRoute()) {
-                return true;
-            }
+        if ($names === []) {
+            return false;
         }
 
-        foreach ($this->files->finder()->findInstanceOf($statements, FuncCall::class) as $call) {
-            if ($call->name instanceof Name && strtolower($call->name->toCodeString()) === 'route') {
-                foreach ($call->args as $arg) {
-                    if ($arg instanceof Node\Arg && $arg->value instanceof String_ && in_array($arg->value->value, $subject->objectParameterNames(), true)) {
-                        return true;
-                    }
-                }
+        $references = $this->files->finder()->find($statements, fn (Node $node): bool => $this->isRouteObjectRead($node, $names));
+
+        foreach ($references as $reference) {
+            if ($this->reachesObjectCheck($reference)) {
+                return true;
             }
         }
 
@@ -699,80 +663,166 @@ final class ActionInspector
     }
 
     /**
-     * Whether the nodes contain any can, authorize, or gate call.
+     * Whether a node reads a routed object inside a FormRequest.
+     *
+     * @param  list<string>  $names
+     */
+    private function isRouteObjectRead(Node $node, array $names): bool
+    {
+        if ($node instanceof MethodCall || $node instanceof NullsafeMethodCall) {
+            if (! $node->name instanceof Node\Identifier) {
+                return false;
+            }
+
+            $method = strtolower($node->name->toString());
+            $first = $node->args[0] ?? null;
+            $literal = $first instanceof Node\Arg && $first->value instanceof String_ ? $first->value->value : null;
+
+            if ($method === 'route') {
+                return $literal !== null && in_array($literal, $names, true);
+            }
+
+            if ($method === 'parameter' && ($node->var instanceof MethodCall || $node->var instanceof NullsafeMethodCall)
+                && $node->var->name instanceof Node\Identifier && strtolower($node->var->name->toString()) === 'route') {
+                return $literal !== null && in_array($literal, $names, true);
+            }
+
+            return false;
+        }
+
+        if ($node instanceof Node\Expr\PropertyFetch || $node instanceof Node\Expr\NullsafePropertyFetch) {
+            return $node->var instanceof Variable
+                && $node->var->name === 'this'
+                && $node->name instanceof Node\Identifier
+                && in_array($node->name->toString(), $names, true);
+        }
+
+        return false;
+    }
+
+    /**
+     * Whether a routed-object read flows into an ability call or a comparison with the signed-in user.
+     */
+    private function reachesObjectCheck(Node $reference): bool
+    {
+        $child = $reference;
+        $parent = $reference->getAttribute('parent');
+
+        while ($parent instanceof Node && ! $parent instanceof Node\Stmt) {
+            if ($this->isAbilityCall($parent) && $this->isArgumentOf($child, $parent)) {
+                return true;
+            }
+
+            $isComparison = $parent instanceof Node\Expr\BinaryOp\Identical || $parent instanceof Node\Expr\BinaryOp\Equal
+                || $parent instanceof Node\Expr\BinaryOp\NotIdentical || $parent instanceof Node\Expr\BinaryOp\NotEqual;
+            $isCall = $parent instanceof MethodCall || $parent instanceof NullsafeMethodCall
+                || $parent instanceof StaticCall || $parent instanceof FuncCall;
+
+            if (($isComparison || $isCall) && $this->containsUser($parent, $child)) {
+                return true;
+            }
+
+            $child = $parent;
+            $parent = $parent->getAttribute('parent');
+        }
+
+        return false;
+    }
+
+    /**
+     * Whether a node is a gate or ability call by name.
+     */
+    private function isAbilityCall(Node $node): bool
+    {
+        if (($node instanceof MethodCall || $node instanceof NullsafeMethodCall) && $node->name instanceof Node\Identifier) {
+            $name = strtolower($node->name->toString());
+
+            return in_array($name, self::ABILITY_METHODS, true) && ($name !== 'check' || $this->looksLikeGateCheck($node));
+        }
+
+        return $node instanceof StaticCall
+            && $node->class instanceof Name
+            && class_basename(ltrim($node->class->toString(), '\\')) === 'Gate'
+            && $node->name instanceof Node\Identifier
+            && in_array(strtolower($node->name->toString()), self::GATE_METHODS, true);
+    }
+
+    /**
+     * Whether a child node is one of the call's arguments rather than its receiver.
+     */
+    private function isArgumentOf(Node $child, Node $call): bool
+    {
+        return $child instanceof Node\Arg && $child->getAttribute('parent') === $call;
+    }
+
+    /**
+     * Whether a node contains a signed-in user expression outside the given subtree.
+     */
+    private function containsUser(Node $node, Node $exclude): bool
+    {
+        $found = $this->files->finder()->findFirst([$node], static function (Node $candidate) use ($exclude): bool {
+            if (! AuthExpressions::isUserDerived($candidate)) {
+                return false;
+            }
+
+            for ($current = $candidate; $current instanceof Node; $current = $current->getAttribute('parent')) {
+                if ($current === $exclude) {
+                    return false;
+                }
+            }
+
+            return true;
+        });
+
+        return $found !== null;
+    }
+
+    /**
+     * Whether the nodes contain any gate or ability call. Signing in is not authorization.
      *
      * @param  list<Node>  $statements
      */
     private function containsAuthorizationCall(array $statements): bool
     {
-        foreach ($this->files->finder()->findInstanceOf($statements, MethodCall::class) as $call) {
-            if ($call->name instanceof Node\Identifier && in_array(strtolower($call->name->toString()), ['can', 'cannot', 'authorize', 'check'], true)) {
-                return true;
-            }
-        }
-
-        foreach ($this->files->finder()->findInstanceOf($statements, StaticCall::class) as $call) {
-            if ($call->name instanceof Node\Identifier && in_array(strtolower($call->name->toString()), self::GATE_METHODS, true)) {
-                return true;
-            }
-        }
-
-        return false;
+        return $this->files->finder()->findFirst($statements, fn (Node $node): bool => $this->isAbilityCall($node)) !== null;
     }
 
     /**
-     * Authorization calls in the collected action nodes.
+     * Authorization calls in the collected action nodes, with whether each one guards the request.
      *
      * @param  list<Node>  $nodes
      * @param  list<string>  $objectVariables
-     * @return list<array{object: bool, ability: string|null, evidence: string}>
+     * @return list<array{object: bool, ability: string|null, evidence: string, enforced: bool}>
      */
-    private function authorizationCalls(array $nodes, array $objectVariables): array
+    private function authorizationCalls(array $nodes, array $objectVariables, ClassMethod|Closure|ArrowFunction $action): array
     {
         $calls = [];
 
-        foreach ($this->files->finder()->findInstanceOf($nodes, MethodCall::class) as $call) {
+        foreach ($this->files->finder()->find($nodes, fn (Node $node): bool => $this->isAbilityCall($node)) as $call) {
+            if (! $call instanceof MethodCall && ! $call instanceof NullsafeMethodCall && ! $call instanceof StaticCall) {
+                continue;
+            }
+
             if (! $call->name instanceof Node\Identifier) {
                 continue;
             }
 
             $name = strtolower($call->name->toString());
+            $arguments = $call->args;
 
-            if (! in_array($name, ['authorize', 'authorizeorfail', 'can', 'cannot', 'check', 'allows', 'denies'], true)) {
-                continue;
+            // Gate::inspect(...)->authorize() carries the object on the inspect call.
+            if ($name === 'authorize' && $arguments === [] && ! $call instanceof StaticCall
+                && ($call->var instanceof StaticCall || $call->var instanceof MethodCall)) {
+                $arguments = $call->var->args;
             }
 
-            if ($name === 'check' && ! $this->looksLikeGateCheck($call)) {
-                continue;
-            }
-
-            $ability = $this->stringArgument($call, 0);
-            $object = $this->argumentsReferenceObject($call->args, $objectVariables)
-                || ($name === 'authorize' && $this->argumentsReferenceObject($call->args, $objectVariables));
+            $throws = in_array($name, self::THROWING_METHODS, true);
 
             $calls[] = [
-                'object' => $object,
-                'ability' => $ability,
-                'evidence' => $this->expressionText($call).' at line '.$call->getStartLine(),
-            ];
-        }
-
-        foreach ($this->files->finder()->findInstanceOf($nodes, StaticCall::class) as $call) {
-            if (! $call->name instanceof Node\Identifier || ! $call->class instanceof Name) {
-                continue;
-            }
-
-            $class = class_basename(ltrim($call->class->toCodeString(), '\\'));
-            $name = strtolower($call->name->toString());
-
-            if (! in_array($class, ['Gate', 'Auth'], true) || ! in_array($name, self::GATE_METHODS, true)) {
-                continue;
-            }
-
-            $calls[] = [
-                'object' => $this->argumentsReferenceObject($call->args, $objectVariables),
+                'object' => $this->argumentsReferenceObject($arguments, $objectVariables),
                 'ability' => $this->stringArgument($call, 0),
-                'evidence' => $class.'::'.$call->name->toString().' at line '.$call->getStartLine(),
+                'evidence' => $this->expressionText($call).' at line '.$call->getStartLine(),
+                'enforced' => $throws || $this->isEnforced($call, $action),
             ];
         }
 
@@ -780,13 +830,99 @@ final class ActionInspector
     }
 
     /**
-     * Avoid treating unrelated check() calls as gate checks.
+     * Whether a boolean ability result decides what the request may do.
+     *
+     * It counts when it is an if, while, ternary, or match condition, the first argument of
+     * abort_if/abort_unless/throw_if/throw_unless, or the return value of a helper the action calls.
+     * Assigning it, passing it to a view, or discarding it does not count.
      */
-    private function looksLikeGateCheck(MethodCall $call): bool
+    private function isEnforced(Node $call, ClassMethod|Closure|ArrowFunction $action): bool
+    {
+        $current = $call;
+        $parent = $call->getAttribute('parent');
+
+        while ($parent instanceof Node) {
+            if ($parent instanceof Node\Expr\BooleanNot || $parent instanceof Node\Expr\Cast\Bool_
+                || $parent instanceof Node\Expr\BinaryOp\BooleanAnd || $parent instanceof Node\Expr\BinaryOp\BooleanOr
+                || $parent instanceof Node\Expr\BinaryOp\LogicalAnd || $parent instanceof Node\Expr\BinaryOp\LogicalOr
+                || $parent instanceof Node\Expr\BinaryOp\Identical || $parent instanceof Node\Expr\BinaryOp\NotIdentical
+                || $parent instanceof Node\Expr\BinaryOp\Equal || $parent instanceof Node\Expr\BinaryOp\NotEqual) {
+                $current = $parent;
+                $parent = $parent->getAttribute('parent');
+
+                continue;
+            }
+
+            // A Response from inspect() is enforced by ->authorize(), or tested through ->allowed() and ->denied().
+            if (($parent instanceof MethodCall || $parent instanceof NullsafeMethodCall) && $parent->var === $current
+                && $parent->name instanceof Node\Identifier) {
+                $method = strtolower($parent->name->toString());
+
+                if ($method === 'authorize') {
+                    return true;
+                }
+
+                if (in_array($method, ['allowed', 'denied'], true)) {
+                    $current = $parent;
+                    $parent = $parent->getAttribute('parent');
+
+                    continue;
+                }
+
+                return false;
+            }
+
+            if (($parent instanceof Node\Stmt\If_ || $parent instanceof Node\Stmt\ElseIf_ || $parent instanceof Node\Stmt\While_
+                || $parent instanceof Node\Stmt\Do_ || $parent instanceof Node\Expr\Ternary || $parent instanceof Node\Expr\Match_)
+                && $parent->cond === $current) {
+                return true;
+            }
+
+            if ($parent instanceof Node\MatchArm && in_array($current, $parent->conds ?? [], true)) {
+                return true;
+            }
+
+            if ($parent instanceof Return_) {
+                return $this->enclosingFunction($parent) !== $action;
+            }
+
+            if ($parent instanceof Node\Arg) {
+                $function = $parent->getAttribute('parent');
+
+                return $function instanceof FuncCall
+                    && $function->name instanceof Name
+                    && in_array(strtolower($function->name->toString()), ['abort_if', 'abort_unless', 'throw_if', 'throw_unless'], true)
+                    && ($function->args[0] ?? null) === $parent;
+            }
+
+            return false;
+        }
+
+        return false;
+    }
+
+    /**
+     * The closest function, method, or closure around a node.
+     */
+    private function enclosingFunction(Node $node): ?Node
+    {
+        for ($current = $node->getAttribute('parent'); $current instanceof Node; $current = $current->getAttribute('parent')) {
+            if ($current instanceof Node\FunctionLike) {
+                return $current;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Avoid treating unrelated check() calls, such as auth()->check(), as gate checks.
+     */
+    private function looksLikeGateCheck(MethodCall|NullsafeMethodCall $call): bool
     {
         $text = $this->expressionText($call->var);
 
-        return str_contains($text, 'auth') || str_contains($text, 'Gate') || str_contains($text, 'user()');
+        return str_contains($text, 'Gate') || str_contains($text, 'gate');
     }
 
     /**
@@ -926,17 +1062,17 @@ final class ActionInspector
     }
 
     /**
-     * Find unscoped static, chained, and DB table lookups in the action nodes.
+     * Find unscoped static, chained, and DB table lookups and writes in the action nodes.
      *
      * @param  list<Node>  $nodes
+     * @param  list<string>  $userVariables
      * @return list<array{rule: string, model: string|null, table: string|null, line: int, expression: string}>
      */
-    private function findLookups(array $nodes, RouteSubject $subject): array
+    private function findLookups(array $nodes, RouteSubject $subject, array $userVariables): array
     {
         $lookups = [];
-        $ownershipColumns = is_array($this->config['ownership']['columns'] ?? null)
-            ? $this->config['ownership']['columns']
-            : ['user_id', 'owner_id', 'tenant_id', 'team_id', 'account_id'];
+        $ownershipColumns = $this->ownershipColumns();
+        $modelVariables = [...$this->modelVariables($subject), ...$userVariables];
 
         foreach ($this->files->finder()->findInstanceOf($nodes, StaticCall::class) as $call) {
             if (! $call->class instanceof Name || ! $call->name instanceof Node\Identifier) {
@@ -954,44 +1090,45 @@ final class ActionInspector
                 continue;
             }
 
-            if (in_array($name, self::SINGLE_FINDERS, true)) {
+            if ($this->isScopingCall($call, $ownershipColumns, $modelVariables)) {
+                continue;
+            }
+
+            if (in_array($name, self::STATIC_SINGLE, true)) {
                 $lookups[] = $this->lookup('unscoped_lookup', $class, null, $call);
-            } elseif ($name === 'all') {
+            } elseif (in_array($name, self::STATIC_COLLECTION, true)) {
                 $lookups[] = $this->lookup('unscoped_collection', $class, null, $call);
             }
         }
 
-        foreach ($this->files->finder()->findInstanceOf($nodes, MethodCall::class) as $call) {
-            if (! $call->name instanceof Node\Identifier) {
+        $chainCalls = $this->files->finder()->find($nodes, static fn (Node $node): bool => $node instanceof MethodCall || $node instanceof NullsafeMethodCall);
+
+        foreach ($chainCalls as $call) {
+            if ((! $call instanceof MethodCall && ! $call instanceof NullsafeMethodCall) || ! $call->name instanceof Node\Identifier) {
                 continue;
             }
 
             $terminal = strtolower($call->name->toString());
+            $collection = in_array($terminal, self::CHAIN_COLLECTION, true);
 
-            if (! in_array($terminal, self::CHAIN_TERMINALS, true)) {
+            if (! $collection && ! in_array($terminal, self::CHAIN_SINGLE, true)) {
                 continue;
             }
 
-            if ($this->isUserRooted($call)) {
+            if (AuthExpressions::chainIsUserRooted($call)) {
                 continue;
             }
 
             $model = $this->chainModel($call, $subject);
-            $table = null;
-
-            if ($model === null) {
-                $table = $this->chainTable($call);
-            }
+            $table = $model === null ? $this->chainTable($call) : null;
 
             if ($model === null && $table === null) {
                 continue;
             }
 
-            if ($model !== null && $this->chainIsScoped($call, $ownershipColumns)) {
+            if ($this->chainIsScoped($call, $ownershipColumns, $modelVariables)) {
                 continue;
             }
-
-            $collection = in_array($terminal, ['get', 'paginate', 'simplepaginate', 'cursorpaginate'], true);
 
             $lookups[] = $this->lookup($collection ? 'unscoped_collection' : 'unscoped_lookup', $model, $table, $call);
         }
@@ -1001,10 +1138,82 @@ final class ActionInspector
         foreach ($lookups as $lookup) {
             $key = $lookup['rule'].'|'.($lookup['model'] ?? $lookup['table'] ?? '').'|'.$lookup['line'];
 
-            $unique[$key] = $lookup;
+            $unique[$key] ??= $lookup;
         }
 
         return array_values($unique);
+    }
+
+    /**
+     * Variables that hold the signed-in user or a value read from it.
+     *
+     * Covers `$user = $request->user();`, `$userId = Auth::id();`, and action parameters marked
+     * with Laravel's #[CurrentUser] or #[Authenticated] attributes.
+     *
+     * @param  list<Node>  $nodes
+     * @return list<string>
+     */
+    private function userVariables(array $nodes, ClassMethod|Closure|ArrowFunction $action): array
+    {
+        $variables = [];
+
+        foreach ($action->params as $param) {
+            foreach ($param->attrGroups as $group) {
+                foreach ($group->attrs as $attribute) {
+                    if (in_array(class_basename($attribute->name->toString()), ['CurrentUser', 'Authenticated'], true)
+                        && $param->var instanceof Variable && is_string($param->var->name)) {
+                        $variables[] = $param->var->name;
+                    }
+                }
+            }
+        }
+
+        // Two passes so `$user = $request->user(); $teamId = $user->current_team_id;` is followed.
+        for ($pass = 0; $pass < 2; $pass++) {
+            foreach ($this->files->finder()->findInstanceOf($nodes, Node\Expr\Assign::class) as $assign) {
+                if ($assign->var instanceof Variable && is_string($assign->var->name)
+                    && AuthExpressions::isUserValue($assign->expr, $variables)) {
+                    $variables[] = $assign->var->name;
+                }
+            }
+        }
+
+        return array_values(array_unique($variables));
+    }
+
+    /**
+     * Configured ownership columns.
+     *
+     * @return list<string>
+     */
+    private function ownershipColumns(): array
+    {
+        $columns = $this->config['ownership']['columns'] ?? null;
+
+        return is_array($columns)
+            ? array_values(array_map('strval', $columns))
+            : ['user_id', 'owner_id', 'tenant_id', 'team_id', 'account_id'];
+    }
+
+    /**
+     * Action variables that hold a route-bound model, such as `$team` for `{team}`.
+     *
+     * A query constrained by one of these is scoped to that parent. Whether the user may reach the
+     * parent is checked by the object_authorization rule. Plain ids such as `{id}` never qualify.
+     *
+     * @return list<string>
+     */
+    private function modelVariables(RouteSubject $subject): array
+    {
+        $variables = [];
+
+        foreach ($subject->objectParameters as $parameter) {
+            if (is_string($parameter['model']) && $parameter['model'] !== '' && is_string($parameter['variable'])) {
+                $variables[] = $parameter['variable'];
+            }
+        }
+
+        return $variables;
     }
 
     /**
@@ -1026,11 +1235,11 @@ final class ActionInspector
     /**
      * Model class at the root of a method chain, when the root is a static model call.
      */
-    private function chainModel(MethodCall $call, RouteSubject $subject): ?string
+    private function chainModel(MethodCall|NullsafeMethodCall $call, RouteSubject $subject): ?string
     {
         $root = $call;
 
-        while ($root instanceof MethodCall) {
+        while ($root instanceof MethodCall || $root instanceof NullsafeMethodCall) {
             $root = $root->var;
         }
 
@@ -1046,11 +1255,11 @@ final class ActionInspector
     /**
      * Table at the root of a DB::table chain, when present.
      */
-    private function chainTable(MethodCall $call): ?string
+    private function chainTable(MethodCall|NullsafeMethodCall $call): ?string
     {
         $root = $call;
 
-        while ($root instanceof MethodCall) {
+        while ($root instanceof MethodCall || $root instanceof NullsafeMethodCall) {
             $root = $root->var;
         }
 
@@ -1068,29 +1277,28 @@ final class ActionInspector
     }
 
     /**
-     * Whether a chain is scoped through the authenticated user or an ownership column.
+     * Whether a chain is scoped through the authenticated user, an ownership column, or a bound parent model.
+     *
+     * Only the call spine is read. A user() call inside an unrelated argument does not scope the query.
      *
      * @param  list<string>  $ownershipColumns
+     * @param  list<string>  $modelVariables
      */
-    private function chainIsScoped(MethodCall $call, array $ownershipColumns): bool
+    private function chainIsScoped(MethodCall|NullsafeMethodCall $call, array $ownershipColumns, array $modelVariables): bool
     {
-        if ($this->isUserRooted($call)) {
+        if (AuthExpressions::chainIsUserRooted($call)) {
             return true;
         }
 
         $current = $call;
 
-        while ($current instanceof MethodCall) {
-            if ($current->name instanceof Node\Identifier && in_array(strtolower($current->name->toString()), ['where', 'wherein', 'wherehas'], true)) {
-                $first = $current->args[0] ?? null;
+        while ($current instanceof MethodCall || $current instanceof NullsafeMethodCall || $current instanceof StaticCall) {
+            if ($this->isScopingCall($current, $ownershipColumns, $modelVariables)) {
+                return true;
+            }
 
-                if ($first instanceof Node\Arg && $first->value instanceof String_ && in_array($first->value->value, $ownershipColumns, true)) {
-                    $text = $this->expressionText($current);
-
-                    if (str_contains($text, 'auth') || str_contains($text, 'user()') || str_contains($text, '->id')) {
-                        return true;
-                    }
-                }
+            if ($current instanceof StaticCall) {
+                break;
             }
 
             $current = $current->var;
@@ -1100,23 +1308,69 @@ final class ActionInspector
     }
 
     /**
-     * Whether an expression is rooted at the authenticated user.
+     * Whether one query call constrains an ownership column to the signed-in user or a bound parent.
+     *
+     * Recognises `where('user_id', Auth::id())`, `where('user_id', '=', $request->user()->id)`,
+     * `where(['team_id' => $team->id])`, `whereBelongsTo($request->user())`, and the same
+     * attribute arrays passed to firstOrCreate and updateOrCreate.
+     *
+     * @param  list<string>  $ownershipColumns
+     * @param  list<string>  $modelVariables
      */
-    private function isUserRooted(Node $node): bool
+    private function isScopingCall(MethodCall|NullsafeMethodCall|StaticCall $call, array $ownershipColumns, array $modelVariables): bool
     {
-        foreach ($this->files->finder()->findInstanceOf([$node], MethodCall::class) as $call) {
-            if ($call->name instanceof Node\Identifier && strtolower($call->name->toString()) === 'user') {
-                return true;
-            }
+        if (! $call->name instanceof Node\Identifier) {
+            return false;
         }
 
-        foreach ($this->files->finder()->findInstanceOf([$node], FuncCall::class) as $call) {
-            if ($call->name instanceof Name && strtolower($call->name->toCodeString()) === 'auth') {
-                return true;
+        $name = strtolower($call->name->toString());
+
+        if (! in_array($name, self::SCOPING_METHODS, true)) {
+            return false;
+        }
+
+        $arguments = array_values(array_filter($call->args, static fn ($arg): bool => $arg instanceof Node\Arg));
+        $first = $arguments[0]->value ?? null;
+
+        if ($first === null) {
+            return false;
+        }
+
+        if ($name === 'wherebelongsto') {
+            return $this->isOwnerValue($first, $modelVariables);
+        }
+
+        if ($first instanceof String_) {
+            if (! in_array($first->value, $ownershipColumns, true)) {
+                return false;
+            }
+
+            $value = count($arguments) >= 3 ? $arguments[2]->value : ($arguments[1]->value ?? null);
+
+            return $value !== null && $this->isOwnerValue($value, $modelVariables);
+        }
+
+        if ($first instanceof Node\Expr\Array_) {
+            foreach ($first->items as $item) {
+                if ($item instanceof Node\ArrayItem && $item->key instanceof String_
+                    && in_array($item->key->value, $ownershipColumns, true)
+                    && $this->isOwnerValue($item->value, $modelVariables)) {
+                    return true;
+                }
             }
         }
 
         return false;
+    }
+
+    /**
+     * Whether a value comes from the signed-in user, the current tenant, a route-bound model, or a variable holding one.
+     *
+     * @param  list<string>  $modelVariables
+     */
+    private function isOwnerValue(Node $value, array $modelVariables): bool
+    {
+        return AuthExpressions::isUserValue($value, $modelVariables);
     }
 
     /**
@@ -1148,13 +1402,24 @@ final class ActionInspector
     }
 
     /**
-     * Compact source text for evidence messages.
+     * Compact source text for evidence messages, printed with the names as written in the source.
      */
     private function expressionText(Node $node): string
     {
         try {
+            $traverser = new NodeTraverser(new CloningVisitor, new class extends NodeVisitorAbstract
+            {
+                public function leaveNode(Node $node): ?Node
+                {
+                    $original = $node->getAttribute('originalName');
+
+                    return $node instanceof Name && $original instanceof Name ? $original : null;
+                }
+            });
+
+            $copy = $traverser->traverse([$node])[0];
             $printer = new Standard;
-            $text = $printer->print($node);
+            $text = $copy instanceof Node\Expr ? $printer->prettyPrintExpr($copy) : $printer->prettyPrint([$copy]);
         } catch (\Throwable) {
             $text = $node::class;
         }

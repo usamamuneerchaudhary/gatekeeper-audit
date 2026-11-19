@@ -32,7 +32,7 @@ final readonly class RouteScanner
     {
         $subjects = [];
 
-        foreach ($this->router->getRoutes() as $route) {
+        foreach ($this->router->getRoutes()->getRoutes() as $route) {
             if (! $route instanceof Route) {
                 continue;
             }
@@ -106,11 +106,7 @@ final readonly class RouteScanner
         }
 
         $objectParameters = $this->objectParameters($route, $parameters);
-        $scopedBindings = false;
-
-        if (method_exists($route, 'enforcesScopedBindings')) {
-            $scopedBindings = $route->enforcesScopedBindings();
-        }
+        $scopedBindings = $route->enforcesScopedBindings();
 
         if (! $scopedBindings && isset($action['scope_bindings'])) {
             $scopedBindings = (bool) $action['scope_bindings'];
@@ -131,7 +127,6 @@ final readonly class RouteScanner
             middleware: $middleware,
             objectParameters: $objectParameters,
             scopedBindings: $scopedBindings,
-            binderScopedParameters: $this->binderScopedParameters($route),
             skipReason: $skipReason,
             routeFile: $this->routeFiles->find(
                 $isClosure ? '' : $actionLabel,
@@ -228,62 +223,6 @@ final readonly class RouteScanner
         }
 
         return $objects;
-    }
-
-    /**
-     * Route parameters with an explicit binder whose closure reads the authenticated user.
-     *
-     * @return list<string>
-     */
-    private function binderScopedParameters(Route $route): array
-    {
-        try {
-            $property = new \ReflectionProperty($this->router, 'binders');
-            $binders = $property->getValue($this->router);
-        } catch (\Throwable) {
-            return [];
-        }
-
-        if (! is_array($binders)) {
-            return [];
-        }
-
-        $scoped = [];
-
-        foreach ($route->parameterNames() as $name) {
-            $binder = $binders[$name] ?? null;
-
-            if (! $binder instanceof \Closure) {
-                continue;
-            }
-
-            try {
-                $reflection = new \ReflectionFunction($binder);
-                $file = $reflection->getFileName();
-                $start = $reflection->getStartLine();
-                $end = $reflection->getEndLine();
-
-                if (! is_string($file) || ! is_file($file)) {
-                    continue;
-                }
-
-                $lines = file($file);
-
-                if ($lines === false || $start === false || $end === false) {
-                    continue;
-                }
-
-                $source = implode('', array_slice($lines, max(0, $start - 1), $end - $start + 1));
-
-                if (str_contains($source, 'auth') || str_contains($source, '->user()') || str_contains($source, 'request()->user')) {
-                    $scoped[] = $name;
-                }
-            } catch (\Throwable) {
-                continue;
-            }
-        }
-
-        return $scoped;
     }
 
     /**

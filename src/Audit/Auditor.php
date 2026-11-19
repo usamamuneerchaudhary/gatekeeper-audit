@@ -198,15 +198,23 @@ final readonly class Auditor
                 $owned = $info->owned;
                 $globalScope = $info->hasGlobalScope;
             } elseif ($group['table'] !== null) {
+                $matched = null;
+
                 foreach ($subject->boundModelClasses() as $bound) {
                     $info = $this->models->inspect($bound);
 
                     if ($info->table === $group['table']) {
-                        $owned = $info->owned;
-                        $globalScope = $info->hasGlobalScope;
-                        $label = $bound.' (table '.$group['table'].')';
+                        $matched = $info;
                         break;
                     }
+                }
+
+                $matched ??= $this->models->forTable($group['table']);
+
+                if ($matched !== null) {
+                    $owned = $matched->owned;
+                    $globalScope = $matched->hasGlobalScope;
+                    $label = $matched->class.' (table '.$group['table'].')';
                 }
             }
 
@@ -278,7 +286,7 @@ final readonly class Auditor
             methods: $subject->methods,
             uri: $subject->uri,
             action: $subject->action,
-            file: $subject->file,
+            file: $subject->file !== null ? PhpFileIndex::relativePath($subject->file) : null,
             lines: $lines,
             message: $message,
             evidence: $evidence,
