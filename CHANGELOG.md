@@ -33,7 +33,7 @@ This release fixes checks that let insecure routes pass. Expect more findings th
 
 ### Internal
 
-- Added PHPStan at level 6 to CI through Slipway, plus `composer analyse`. PHPStan reports the missing printer method in 1.0.2.
+- Added PHPStan at level 6 to CI through Slipway, plus `composer analyse`. PHPStan reports the missing printer method in 1.0.2. It runs from a pinned, checksum-verified phar (`tools/phpstan`) instead of a Composer dependency, because GitHub throttles the `phpstan/phpstan` Composer archive on Actions runners.
 - Added regression tests for each fix above.
 - Removed unused code: route binder sniffing, the unused model inspector dependency of the action inspector, and the command's second baseline pass.
 - `SECURITY.md` now states that the audit boots the application and may construct controllers, policies, and commands.

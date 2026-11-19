@@ -60,7 +60,14 @@ return [
     'env' => [],
 
     'stages' => [
-        'quality' => ['pint', 'phpstan', 'composer-audit', 'secret-scan'],
+        // PHPStan runs from a pinned, checksum-verified phar, not Composer. GitHub throttles
+        // the phpstan/phpstan Composer archive on Actions runners. See tools/phpstan.
+        'quality' => [
+            'pint',
+            ['name' => 'Static analysis (PHPStan)', 'run' => 'php tools/phpstan analyse --no-progress --no-interaction --memory-limit=1G'],
+            'composer-audit',
+            'secret-scan',
+        ],
 
         'test' => [
             'matrix' => true,
